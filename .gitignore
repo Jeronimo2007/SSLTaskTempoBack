@@ -1,1 +1,35 @@
+# Archivos de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env
+*.env
+
+# Logs y caché
+logs/
+*.log
+*.sqlite3
+*.db
+*.pid
+
+# Archivos de dependencias
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Configuración de IDEs y editores
+.vscode/
+.idea/
+*.swp
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Supabase (si usas credenciales locales)
+supabase/
+
 .qodo
