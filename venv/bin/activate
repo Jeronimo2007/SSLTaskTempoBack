@@ -38,7 +38,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV=/home/jeronimogomez/Documents/timeManagerBack/venv
+VIRTUAL_ENV=/home/jeronimogomez/Documents/TaskTempoClients/SSL/SSLBack/venv
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"

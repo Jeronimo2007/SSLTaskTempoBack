@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from app.models.ModelTimeEntry import create_time_entry, delete_time_entry, get_all_time_entries, get_time_entry, update_time_entry
-from app.schemas.schemas import TimeEntryCreate, TimeEntryResponse, TimeEntryUpdate
+from app.schemas.schemas import TimeEntryCreate, TimeEntryResponse, TimeEntryUpdate, getEntries
 from app.services.utils import get_current_user
 
 
@@ -28,12 +28,12 @@ async def create_time_entry_endpoint(entry_data: TimeEntryCreate, user: dict = D
     return entry
 
 
-@router.get("/get_all_time_entries", response_model=List[TimeEntryResponse])
-async def get_time_entries_endpoint():
+@router.post("/get_all_time_entries")
+async def get_time_entries_endpoint(data: getEntries):
 
     """ get all time entries"""
 
-    return get_all_time_entries()
+    return get_all_time_entries(data)
 
 
 @router.get("/get_time_entry/{entry_id}", response_model=TimeEntryResponse)

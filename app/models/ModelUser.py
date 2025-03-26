@@ -1,4 +1,3 @@
-
 from ..database.data import supabase  
 from app.services.utils import hash_password
 
@@ -31,18 +30,17 @@ def create_user(username: str, password: str, role_code: str):
         return {"error": "Error al crear el usuario", "details": response.error}
 
 def get_user(username: str):
-    """ get all the data of an user by username """
-    response = supabase.table("users").select("id,username, hashed_password,role").eq("username", username).execute()
+    """ Get all the data of a user by username, excluding those marked as 'desvinculado' """
+    response = supabase.table("users").select("id,username,hashed_password,role,desvinculado").eq("username", username).neq("desvinculado", True).execute()
     if response.data:
         return response.data[0]  
     else:
         return None  
-    
 
 
 def get_all_users():
-    """ get all the users in the database """
-    response = supabase.table("users").select("*").execute()
+    """ Get all the users in the database, excluding those marked as 'desvinculado' """
+    response = supabase.table("users").select("*").neq("desvinculado", True).execute()
     if response.data:
         return response.data
     else:

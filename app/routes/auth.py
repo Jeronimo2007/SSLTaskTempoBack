@@ -31,6 +31,10 @@ async def register_user(user_data: UserCreate):
 @router.post("/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """Verify credentials and returns the acces token"""
+
+    
+
+
     user = get_user(form_data.username)
     if not user or not verify_password(form_data.password, user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
