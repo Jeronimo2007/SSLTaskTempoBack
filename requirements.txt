@@ -55,3 +55,5 @@ uvicorn==0.34.0
 websockets==14.2
 XlsxWriter==3.2.2
 yarl==1.18.3
+weasyprint==65.0
+jinja2==3.1.6

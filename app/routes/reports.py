@@ -1,14 +1,22 @@
-from fastapi import APIRouter, HTTPException, Depends
+from collections import defaultdict
+import os
+import tempfile
+from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from typing import List
 from datetime import datetime
 from app.database.data import supabase
-from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, ReportRequest
+from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest
 from app.services.utils import role_required
 import pandas as pd
 import io
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from jinja2 import Environment, FileSystemLoader  
+from weasyprint import HTML
+
+
+env = Environment(loader=FileSystemLoader("app/templates"))
 
 router = APIRouter(prefix="/reports", tags=["Reportes"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
@@ -359,3 +367,247 @@ async def get_time_entries(data: ClientReportRequestTimeEntries, user: dict = De
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener los registros de tiempo: {str(e)}")
+    
+
+
+@router.post("/invoices/by-hours")
+def generate_invoice_by_hours(req: InvoiceByHoursRequest):
+    try:
+        today = datetime.now()
+        start_of_month = today.replace(day=1).date()
+        end_of_month = today.date()
+
+        # Validación si es en dólares
+        if req.currency == "USD" and not req.exchange_rate:
+            raise HTTPException(status_code=400, detail="Debe enviar exchange_rate si la moneda es USD")
+
+        # Obtener info del cliente
+        client_resp = supabase.table("clients").select("*").eq("id", req.client_id).single().execute()
+        if not client_resp or not client_resp.data:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        client = client_resp.data
+
+        # Obtener tareas del cliente con título y área
+        tasks_resp = supabase.table("tasks").select("id, title, area").eq("client_id", req.client_id).execute()
+        if not tasks_resp or not tasks_resp.data:
+            raise HTTPException(status_code=400, detail="El cliente no tiene tareas")
+        task_map = {t["id"]: {"title": t["title"], "area": t.get("area", "N/A")} for t in tasks_resp.data}
+
+        # Obtener time entries del mes actual
+        time_resp = supabase.table("time_entries")\
+            .select("duration, task_id, user_id, start_time")\
+            .in_("task_id", list(task_map.keys()))\
+            .gte("start_time", str(start_of_month))\
+            .lte("start_time", str(end_of_month))\
+            .execute()
+        if not time_resp or not time_resp.data:
+            raise HTTPException(status_code=400, detail="No hay registros de tiempo este mes")
+        entries = time_resp.data
+
+        # Obtener usuarios relacionados
+        user_ids = list(set([e["user_id"] for e in entries]))
+        users_resp = supabase.table("users").select("id, username, cost").in_("id", user_ids).execute()
+        if not users_resp or not users_resp.data:
+            raise HTTPException(status_code=400, detail="No se encontraron usuarios relacionados")
+        user_map = {u["id"]: u for u in users_resp.data}
+
+        # Agrupar por abogado y descripción de tarea
+        tasks_details = []
+        for e in entries:
+            uid = e["user_id"]
+            tid = e["task_id"]
+            duration = round(e["duration"], 2)
+            rate_cop = user_map[uid]["cost"]
+            rate = rate_cop
+            total = rate_cop * duration
+
+            if req.currency == "USD":
+                rate = round(rate_cop / req.exchange_rate, 2)
+                total = round(total / req.exchange_rate, 2)
+
+            tasks_details.append({
+                "username": user_map[uid]["username"],
+                "description": task_map[tid]["title"],
+                "area": task_map[tid]["area"],
+                "duration": duration,
+                "rate": rate,
+                "total": total
+            })
+
+        subtotal = round(sum([t["total"] for t in tasks_details]), 2)
+        tax = round(subtotal * 0.19, 2)
+        total = round(subtotal + tax, 2)
+        currency_symbol = "$" if req.currency == "COP" else "USD"
+
+        # Render HTML con Jinja
+        template = env.get_template("invoice_template.html")
+        html_out = template.render(
+            client=client,
+            date=today.strftime("%Y-%m-%d"),
+            start_date=start_of_month,
+            end_date=end_of_month,
+            tasks_details=tasks_details,
+            subtotal=subtotal,
+            tax=tax,
+            total=total,
+            currency_symbol=currency_symbol
+        )
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
+            pdf_path = tmpfile.name
+
+        # ✅ Pasar base_url para resolver correctamente imágenes locales
+        HTML(string=html_out, base_url=os.getcwd()).write_pdf(pdf_path)
+
+        # Registrar factura
+        supabase.table("invoices").insert({
+            "client_id": req.client_id,
+            "start_date": str(start_of_month),
+            "end_date": str(end_of_month),
+            "billing_type": "hourly",
+            "total_hours": sum([t["duration"] for t in tasks_details]),
+            "subtotal": subtotal,
+            "tax": tax,
+            "total": total
+        }).execute()
+
+        nombre_archivo = f"factura_{client['name'].replace(' ', '_')}_{today.strftime('%Y-%m-%d')}.pdf"
+
+        return FileResponse(
+            path=pdf_path,
+            filename=nombre_archivo,
+            media_type="application/pdf"
+        )
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
+
+@router.post("/invoices/by-percentage")
+def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
+    try:
+        print("🔹 Paso 1: Validación de moneda")
+        if req.currency == "USD" and not req.exchange_rate:
+            raise HTTPException(status_code=400, detail="Debe enviar exchange_rate si la moneda es USD")
+
+        print("🔹 Paso 2: Obtener cliente")
+        client_resp = supabase.table("clients").select("*").eq("id", req.client_id).single().execute()
+        if not client_resp or not client_resp.data:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        client = client_resp.data
+
+        print("🔹 Paso 3: Calcular valores")
+        raw_subtotal = req.total_case_value * (req.percentage / 100)
+        subtotal = round(raw_subtotal, 2) if req.currency == "USD" else round(raw_subtotal, 2)
+        tax = round(subtotal * 0.19, 2)
+        total = round(subtotal + tax, 2)
+        currency_symbol = "$" if req.currency == "COP" else "USD"
+
+        print("🔹 Paso 4: Construir tasks_details")
+        formatted_total = format(req.total_case_value, ',.2f')
+        description = f"{req.payment_type.capitalize()} del {req.percentage}% sobre un valor de {currency_symbol} {formatted_total}"
+
+        tasks_details = [{
+            "username": "—",
+            "area": "—",
+            "description": description,
+            "duration": "—",
+            "rate": "—",
+            "total": subtotal
+        }]
+
+        print("🔹 Paso 5: Renderizar HTML")
+        template = env.get_template("invoice_template.html")
+        html_out = template.render(
+            client=client,
+            date=datetime.now().strftime("%Y-%m-%d"),
+            start_date=datetime.now().replace(day=1).date(),
+            end_date=datetime.now().date(),
+            tasks_details=tasks_details,
+            subtotal=subtotal,
+            tax=tax,
+            total=total,
+            currency_symbol=currency_symbol
+        )
+
+        print("🔹 Paso 6: Generar PDF")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
+            pdf_path = tmpfile.name
+        HTML(string=html_out, base_url=os.getcwd()).write_pdf(pdf_path)
+
+        print("🔹 Paso 7: Registrar factura")
+        supabase.table("invoices").insert({
+            "client_id": req.client_id,
+            "start_date": str(datetime.now().replace(day=1).date()),
+            "end_date": str(datetime.now().date()),
+            "billing_type": "percentage",
+            "total_case_value": req.total_case_value,
+            "percentage": req.percentage,
+            "subtotal": subtotal,
+            "tax": tax,
+            "total": total,
+            "payment_type": req.payment_type
+        }).execute()
+
+        nombre_archivo = f"factura_{client['name'].replace(' ', '_')}_{datetime.now().strftime('%Y-%m-%d')}.pdf"
+        print("✅ PDF listo:", nombre_archivo)
+
+        return FileResponse(
+            path=pdf_path,
+            filename=nombre_archivo,
+            media_type="application/pdf"
+        )
+
+    except HTTPException as e:
+        print("❗ HTTP Exception:", e.detail)
+        raise e
+    except Exception as e:
+        print("❗ Excepción inesperada:", str(e))
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
+
+@router.get("/invoices/registry")
+def get_invoice_registry(
+    start_date: str = Query(..., description="Fecha inicial en formato YYYY-MM-DD"),
+    end_date: str = Query(..., description="Fecha final en formato YYYY-MM-DD")
+):
+    try:
+        # Obtener facturas en el rango
+        response = supabase.table("invoices")\
+            .select("*, clients(name)")\
+            .gte("issued_at", start_date)\
+            .lte("issued_at", end_date)\
+            .order("issued_at", desc=True)\
+            .execute()
+
+        raw_data = response.data or []
+
+        # Transformar resultados
+        facturas = []
+        for f in raw_data:
+            facturas.append({
+                "id": f["id"],
+                "issued_at": f["issued_at"],
+                "billing_type": f["billing_type"],
+                "subtotal": f["subtotal"],
+                "tax": f["tax"],
+                "total": f["total"],
+                "percentage": f.get("percentage"),
+                "payment_type": f.get("payment_type"),
+                "total_hours": f.get("total_hours"),
+                "total_case_value": f.get("total_case_value"),
+                "client_name": f["clients"]["name"]
+            })
+
+        return facturas
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+    
+
+
+
+
+

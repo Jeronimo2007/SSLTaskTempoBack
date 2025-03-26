@@ -1,19 +1,32 @@
 from pydantic import BaseModel, Field
-from typing import Optional
-from datetime import datetime
+from typing import List, Literal, Optional
+from datetime import date, datetime
 
 
 class clientCreate(BaseModel):
     name: str
-    color: str
-    
+    permanent: bool
+    monthly_limit_hours: Optional[float] = 0
+    lawyers: list[int]
+    nit: str
+    phone: str
+    city: str
+    address: str
+    email: str
 
 
 class clientUpdate(BaseModel):
     id: int
-    name: str
-    color: str
-    
+    name: Optional[str] = None
+    lawyers: Optional[list[int]] = None 
+    permanent: Optional[bool] = None
+    monthly_limit_hours: Optional[float] = None 
+    nit: str
+    phone: str
+    city: str
+    address: str
+    email: str
+
 
 
 
@@ -23,15 +36,14 @@ class clientDelete(BaseModel):
 
 class TaskCreate(BaseModel):
     client_id: int
-    title: str = Field(..., min_length=3, max_length=255)
-    description: Optional[str] 
-    assigned_to_id: int
+    title: str 
+    status: str
     due_date: datetime
 
 class TaskUpdate(BaseModel):
-    description: Optional[str] = None
+    id: int
+    title: Optional[str] = None
     status: Optional[str] = None
-    assigned_to_id: Optional[int] = None
     due_date: Optional[str] = None
 
 class TaskResponse(BaseModel):
@@ -50,6 +62,7 @@ class TimeEntryCreate(BaseModel):
     task_id: int
     start_time: datetime
     end_time: datetime
+    description: str
 
 
 class TimeEntryUpdate(BaseModel):
@@ -64,6 +77,10 @@ class TimeEntryResponse(BaseModel):
     start_time: datetime
     end_time: datetime
     duration: float
+
+class getEntries(BaseModel):
+    start_date: datetime
+    end_date: datetime
 
 
 class ReportRequest(BaseModel):
@@ -81,3 +98,34 @@ class ClientReportRequest(BaseModel):
 class ClientReportRequestTimeEntries(BaseModel):
     start_date: datetime
     end_date: datetime
+
+
+class InvoiceByHoursRequest(BaseModel):
+    client_id: int
+    currency: Literal["COP", "USD"]
+    exchange_rate: Optional[float] = None 
+
+    
+class InvoiceByPercentageRequest(BaseModel):
+    client_id: int
+    total_case_value: float
+    percentage: float  # entre 0 y 100
+    payment_type: Literal["anticipo", "fracción", "final"]
+    currency: Literal["COP", "USD"]
+    exchange_rate: Optional[float] = None 
+
+class InvoiceFilterRequest(BaseModel):
+    client_id: int
+    start_date: str  
+    end_date: str
+
+
+class EventCreate(BaseModel):
+    title: str
+    event_date: date
+    user_ids: List[int]
+
+class EventUpdate(BaseModel):
+    title: str
+    event_date: date
+    user_ids: List[int]

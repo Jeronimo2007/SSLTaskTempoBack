@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: sans-serif; font-size: 12px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+    .firm-info { text-align: right; font-size: 10px; }
+    .logo { width: 120px; height: auto; }
+    .tasktempo-logo { width: 200px; height: auto; }
+    h1 { text-align: center; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #999; padding: 6px; text-align: left; }
+    .right { text-align: right; }
+  </style>
+</head>
+<body>
+
+  <h1>Factura de Servicios</h1>
+  <!-- Cabecera principal con logos arriba y datos abajo -->
+  <div class="header" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+    
+    <!-- TaskTempo logo e info cliente -->
+    <div style="flex: 1; font-size: 11px;">
+      <div style="text-align: left;">
+        <img src="app/img/TaskTempo-Logo.png" alt="TaskTempo Logo" class="logo tasktempo-logo">
+      </div>
+      <p><strong>Cliente:</strong> {{ client.name }}</p>
+      <p><strong>NIT:</strong> {{ client.nit }}</p>
+      <p><strong>Ciudad:</strong> {{ client.city }}</p>
+      <p><strong>Email:</strong> {{ client.email }}</p>
+      <p><strong>Periodo:</strong> {{ start_date }} al {{ end_date }}</p>
+    </div>
+
+    <!-- SSL logo e info firma -->
+    <div class="firm-info" style="flex: 1; text-align: right; font-size: 10px;">
+      <div style="text-align: right;">
+        <img class="logo" src="app/img/logo.jpeg" alt="Logo">
+      </div>
+      <br>
+      <p><strong>SSL Abogados Consultores</strong></p>
+      <p><strong>Cel:</strong> 311 6329418</p>
+      <p><strong>Correo:</strong> info@sslabogadosconsultores.com</p>
+    </div>
+  </div>
+
+
+  <br>
+  <p><strong>Fecha de emisión:</strong> {{ date }}</p>
+  <br>
+  
+
+  <table>
+    <thead style="background-color: rgba(37, 99, 235, 0.9); color: white;">
+      <tr>
+        <th>Abogado</th>
+        <th>Área</th>
+        <th>Descripción</th>
+        <th>Horas</th>
+        <th>Tarifa</th>
+        <th>Total</th>
+      </tr>
+    </thead>
+    <tbody style="background-color: #f9f9f9;">
+      {% for t in tasks_details %}
+      <tr>
+        <td>{{ t.username }}</td>
+        <td>{{ t.area }}</td>
+        <td>{{ t.description }}</td>
+        <td class="right">{{ '%.2f' % t.duration if t.duration != '—' else t.duration }}</td>
+
+        <td class="right">
+          {{ currency_symbol }} {{ '%.2f' % t.rate if t.rate != '—' else t.rate }}
+        </td>
+        <td class="right">
+          {{ currency_symbol }} {{ '%.2f' % t.total if t.total != '—' else t.total }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  
+  <br>
+  
+  <!-- Totales abajo -->
+  <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+    <tr>
+      <td style="text-align: right; font-weight: bold;">Subtotal:</td>
+      <td style="text-align: right;">{{ currency_symbol }} {{ '%.2f' % subtotal }}</td>
+    </tr>
+    <tr>
+      <td style="text-align: right; font-weight: bold;">IVA (19%):</td>
+      <td style="text-align: right;">{{ currency_symbol }} {{ '%.2f' % tax }}</td>
+    </tr>
+    <tr style="background-color: rgba(37, 99, 235, 0.9); color: white;">
+      <td style="text-align: right; font-weight: bold;">Total</td>
+      <td style="text-align: right; font-weight: bold;">{{ currency_symbol }} {{ '%.2f' % total }}</td>
+    </tr>
+  </table>
+  
+  <br>
+
+</body>
+</html>

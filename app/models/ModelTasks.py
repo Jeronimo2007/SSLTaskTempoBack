@@ -37,7 +37,7 @@ def get_all_tasks():
     """ get the task with the client and the user assigned """
 
     response = supabase.table("tasks").select(
-        "id, title, status, due_date, client_id, clients(name), assigned_to_id, users(username)"
+        "id, title, status, due_date, client_id, clients(name), area"
     ).execute()
 
     if not response.data:
@@ -51,7 +51,7 @@ def get_all_tasks():
             "status": task["status"],
             "due_date": task["due_date"],
             "client": task["clients"]["name"] if task["clients"] else "Sin Cliente",
-            "assigned_to": task["users"]["username"] if task["users"] else "Sin Asignado"
+            "area": task["area"]
         }
         for task in response.data
     ]
@@ -69,9 +69,11 @@ def get_tasks_by_user_id(user_id: int):
 
 
 
-def update_task(task_id: int, task_data: TaskUpdate):
+def update_task(task_data: TaskUpdate):
     """ Update a task by id """
     
+    task_id = task_data.id
+
     task_dict = task_data.dict(exclude_unset=True)
 
     
@@ -110,3 +112,31 @@ def delete_task(task_id: int):
     else:
 
         return {"error": response.error}
+    
+
+
+
+def assigned_tasks(user_id: int):
+    """ get the tasks assigned to a user """
+
+    try:
+        # Get the client IDs associated with the user
+        response_relation = supabase.table("client_user").select("client_id").eq("user_id", user_id).execute()
+
+        if not response_relation.data:
+            raise HTTPException(status_code=404, detail="No se encontraron clientes asignados al usuario")
+        
+        # Get the task IDs associated with the retrieved client IDs
+        client_ids = [client["client_id"] for client in response_relation.data]
+        response_task = supabase.table("tasks").select("id, client_id").in_("client_id", client_ids).execute()
+
+        if not response_task.data:
+            raise HTTPException(status_code=404, detail="No se encontraron tareas asignadas a los clientes del usuario")
+        
+        # Return the task IDs along with their associated client IDs
+        return [{"task_id": task["id"], "client_id": task["client_id"]} for task in response_task.data]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener las tareas asignadas: {str(e)}")
+
+    return response.data if response.data else []

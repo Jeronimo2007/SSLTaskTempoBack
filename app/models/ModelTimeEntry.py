@@ -1,7 +1,7 @@
 
 from app.database.data import supabase
 from datetime import datetime
-from app.schemas.schemas import TimeEntryCreate, TimeEntryUpdate
+from app.schemas.schemas import TimeEntryCreate, TimeEntryUpdate, getEntries
 
 
 def calculate_duration(start_time: datetime, end_time: datetime) -> float:
@@ -24,8 +24,10 @@ def create_time_entry(user_id: int, entry_data: TimeEntryCreate):
         
         "task_id": entry_data.task_id,
         "user_id": user_id,
+        "duration": duration,
         "start_time": entry_data.start_time.isoformat(),
-        "end_time": entry_data.end_time.isoformat()
+        "end_time": entry_data.end_time.isoformat(),
+        "description": entry_data.description
 
     }).execute()
 
@@ -38,13 +40,14 @@ def create_time_entry(user_id: int, entry_data: TimeEntryCreate):
         return {"error": response.error}
     
 
-def get_all_time_entries():
+def get_all_time_entries(data: getEntries):
 
-    """ get all the time entries """
+    """ get all the time entries between start_date and end_date """
 
-    response = supabase.table("time_entries").select("*").execute()
+    response = supabase.table("time_entries").select("*").gte("start_time", data.start_date.isoformat()).lte("end_time", data.end_date.isoformat()).execute()
 
     return response.data if response.data else []
+
 
 def get_time_entry(entry_id: int):
 

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import TimeEntry, auth, clientes, reports, tasks
+from app.routes import TimeEntry, auth, clientes, reports, tasks, events
 
 app = FastAPI()
 
@@ -19,6 +19,7 @@ app.include_router(clientes.router)
 app.include_router(tasks.router)
 app.include_router(TimeEntry.router)
 app.include_router(reports.router)
+app.include_router(events.router)
 
 @app.get('/')
 def root():
