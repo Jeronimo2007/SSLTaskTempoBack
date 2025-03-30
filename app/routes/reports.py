@@ -39,7 +39,6 @@ async def get_hours_by_client(
 ):
     """get the report of the client between two dates"""
     
-    
     response = supabase.table("time_entries") \
         .select("task_id, duration, start_time, end_time") \
         .gte("start_time", request.start_date.isoformat()) \
@@ -49,7 +48,6 @@ async def get_hours_by_client(
     if not response.data:
         raise HTTPException(status_code=404, detail="No hay datos en el rango de fechas seleccionado")
    
-    
     task_response = supabase.table("tasks").select("id, client_id, title").execute()
     task_dict = {task["id"]: {"client_id": task["client_id"], "title": task["title"]} for task in task_response.data}
 
@@ -67,20 +65,10 @@ async def get_hours_by_client(
             
             client_hours[client_id]["total_hours"] += entry["duration"]
             
-            if task_title not in client_hours[client_id]["tasks"]:
-                client_hours[client_id]["tasks"][task_title] = 0
-            client_hours[client_id]["tasks"][task_title] += entry["duration"]
+            if task_id not in client_hours[client_id]["tasks"]:
+                client_hours[client_id]["tasks"][task_id] = {"title": task_title, "hours": 0}
+            client_hours[client_id]["tasks"][task_id]["hours"] += entry["duration"]
 
-   
-    for task in task_response.data:
-        client_id = task["client_id"]
-        task_title = task["title"]
-       
-        if client_id in client_hours:
-            if task_title not in client_hours[client_id]["tasks"]:
-                client_hours[client_id]["tasks"][task_title] = 0
-
-   
     client_response = supabase.table("clients").select("id, name").execute()
     client_dict = {client["id"]: client["name"] for client in client_response.data}
 
@@ -89,8 +77,8 @@ async def get_hours_by_client(
         client_name = client_dict.get(client_id, "Desconocido")
         total_hours = round(data["total_hours"], 2) 
         
-        tasks = [{"Título": title, "Horas": round(hours, 2)} 
-                 for title, hours in data["tasks"].items()]
+        tasks = [{"task_id": task_id, "Título": task_data["title"], "Horas": round(task_data["hours"], 2)} 
+                 for task_id, task_data in data["tasks"].items()]
         
         report_data.append({
             "Cliente": client_name,
@@ -105,36 +93,52 @@ async def download_report(
     request: ReportRequest,
     user: dict = Depends(role_required(["socio", "senior", "consultor"]))
 ):
-    """donwload the report of clients"""
-    
+    """Download the report of clients"""
+
+    # Obtener datos del cliente
     report_data = await get_hours_by_client(request, user)
-    
-   
+
+    # Obtener tareas con las nuevas columnas
+    task_response = supabase.table("tasks").select("id, assignment_date, due_date, area").execute()
+    task_dict = {task["id"]: task for task in task_response.data}
+
+    # Preparar datos para el archivo Excel
     excel_data = []
     for entry in report_data:
         client_name = entry["Cliente"]
         total_hours = entry["Total Horas"]
-        
+
         if not entry["Tareas"]:
             excel_data.append({
                 "Cliente": client_name,
                 "Total Horas": total_hours,
                 "Tarea": "",
-                "Horas por Tarea": ""
+                "Horas por Tarea": "",
+                "Fecha de Asignación": "",
+                "Fecha de Vencimiento": "",
+                "Área": ""
             })
             continue
-        
+
         for idx, task in enumerate(entry["Tareas"]):
+            # Buscar información de la tarea usando task_id
+            task_id = task.get("task_id")
+            task_info = task_dict.get(task_id)
+
             excel_data.append({
                 "Cliente": client_name if idx == 0 else "",
                 "Total Horas": total_hours if idx == 0 else "",
                 "Tarea": task.get("Título", ""),
-                "Horas por Tarea": task.get("Horas", "")
+                "Horas por Tarea": task.get("Horas", ""),
+                "Fecha de Asignación": task_info.get("assignment_date", "").split("T")[0] if task_info else "",
+                "Fecha de Vencimiento": task_info.get("due_date", "").split("T")[0] if task_info else "",
+                "Área": task_info.get("area", "") if task_info else ""
             })
 
+    # Crear archivo Excel
     df = pd.DataFrame(excel_data)
-
     output = io.BytesIO()
+
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df.to_excel(writer, sheet_name="Reporte", index=False, startrow=1)
         workbook = writer.book
@@ -155,13 +159,16 @@ async def download_report(
             'valign': 'vcenter'
         })
 
+        # Ajustar el ancho de las columnas
         for col_num, value in enumerate(df.columns.values):
             worksheet.write(1, col_num, value, header_format)
-            worksheet.set_column(col_num, col_num, 15)
+            worksheet.set_column(col_num, col_num, 20)
 
-        
-        worksheet.set_column('A:A', 30)  
-        worksheet.set_column('C:C', 30)  
+        worksheet.set_column('A:A', 30)  # Ajusta el ancho de la columna "Cliente"
+        worksheet.set_column('C:C', 30)  # Ajusta el ancho de la columna "Tarea"
+        worksheet.set_column('E:E', 25)  # Ajusta el ancho de la columna "Fecha de Asignación"
+        worksheet.set_column('F:F', 25)  # Ajusta el ancho de la columna "Fecha de Vencimiento"
+        worksheet.set_column('G:G', 20)  # Ajusta el ancho de la columna "Área"
 
         title_format = workbook.add_format({
             'bold': True,
@@ -169,7 +176,7 @@ async def download_report(
             'align': 'center',
             'valign': 'vcenter'
         })
-        worksheet.merge_range('A1:D1', 'Reporte de Horas por Cliente', title_format)
+        worksheet.merge_range('A1:G1', 'Reporte de Horas por Cliente', title_format)
 
         for row in range(len(df)):
             for col in range(len(df.columns)):
@@ -188,9 +195,9 @@ async def download_client_report(
     request: ClientReportRequest,
     user: dict = Depends(role_required(["socio", "senior", "consultor"]))
 ):
-    """ Donwload the report of a sepecific client """
+    """Download the report of a specific client"""
 
-   
+    # Obtener datos del cliente
     client_response = supabase.table("clients") \
         .select("id, name") \
         .eq("id", request.client_id) \
@@ -199,75 +206,25 @@ async def download_client_report(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     client_name = client_response.data[0]["name"]
 
-   
-    time_response = supabase.table("time_entries") \
-        .select("task_id, duration, start_time, end_time") \
-        .gte("start_time", request.start_date.isoformat()) \
-        .lte("end_time", request.end_date.isoformat()) \
-        .execute()
-
-    if not time_response.data:
-        raise HTTPException(status_code=404, detail="No hay datos en el rango de fechas seleccionado")
-
-   
+    # Obtener tareas con las nuevas columnas
     task_response = supabase.table("tasks") \
-        .select("id, client_id, title") \
+        .select("id, client_id, title, assignment_date, due_date, area") \
         .eq("client_id", request.client_id) \
         .execute()
-    if not task_response.data:
-        raise HTTPException(status_code=404, detail="No hay tareas registradas para este cliente")
-    task_dict = {task["id"]: {"client_id": task["client_id"], "title": task["title"]} for task in task_response.data}
+    task_dict = {task["id"]: task for task in task_response.data}
 
-   
-    client_hours_data = {"total_hours": 0, "tasks": {}}
-    for entry in time_response.data:
-        task_id = entry["task_id"]
-        if task_id not in task_dict:
-            continue
-        task_title = task_dict[task_id]["title"]
-        client_hours_data["total_hours"] += entry["duration"]
-        if task_title not in client_hours_data["tasks"]:
-            client_hours_data["tasks"][task_title] = 0
-        client_hours_data["tasks"][task_title] += entry["duration"]
-
-    
-    for task in task_response.data:
-        task_title = task["title"]
-        if task_title not in client_hours_data["tasks"]:
-            client_hours_data["tasks"][task_title] = 0
-
-    total_hours = round(client_hours_data["total_hours"], 2)
-    tasks_list = [{"Título": title, "Horas": round(hours, 2)} for title, hours in client_hours_data["tasks"].items()]
-
-   
-    report = [{
-        "Cliente": client_name,
-        "Total Horas": total_hours,
-        "Tareas": tasks_list
-    }]
-
-    
+    # Preparar datos para el archivo Excel
     excel_data = []
-    for entry in report:
-        cname = entry["Cliente"]
-        total = entry["Total Horas"]
-        if not entry["Tareas"]:
-            excel_data.append({
-                "Cliente": cname,
-                "Total Horas": total,
-                "Tarea": "",
-                "Horas por Tarea": ""
-            })
-            continue
+    for task_id, task_info in task_dict.items():
+        excel_data.append({
+            "Cliente": client_name,
+            "Tarea": task_info["title"],
+            "Fecha de Asignación": task_info.get("assignment_date", "").split("T")[0],
+            "Fecha de Vencimiento": task_info.get("due_date", "").split("T")[0],
+            "Área": task_info.get("area", "")
+        })
 
-        for idx, task in enumerate(entry["Tareas"]):
-            excel_data.append({
-                "Cliente": cname if idx == 0 else "",
-                "Total Horas": total if idx == 0 else "",
-                "Tarea": task.get("Título", ""),
-                "Horas por Tarea": task.get("Horas", "")
-            })
-
+    # Crear archivo Excel
     df = pd.DataFrame(excel_data)
     output = io.BytesIO()
 
@@ -295,8 +252,7 @@ async def download_client_report(
             worksheet.write(1, col_num, value, header_format)
             worksheet.set_column(col_num, col_num, 15)
 
-        
-        worksheet.set_column('A:A', 30) 
+        worksheet.set_column('A:A', 30)  
         worksheet.set_column('C:C', 30)  
 
         title_format = workbook.add_format({
@@ -305,7 +261,7 @@ async def download_client_report(
             'align': 'center',
             'valign': 'vcenter'
         })
-        worksheet.merge_range('A1:D1', f'Reporte de Horas para {client_name}', title_format)
+        worksheet.merge_range('A1:E1', f'Reporte de Horas para {client_name}', title_format)
 
         for row in range(len(df)):
             for col in range(len(df.columns)):
@@ -368,51 +324,47 @@ async def get_time_entries(data: ClientReportRequestTimeEntries, user: dict = De
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener los registros de tiempo: {str(e)}")
     
-
-
 @router.post("/invoices/by-hours")
-def generate_invoice_by_hours(req: InvoiceByHoursRequest):
+def generate_order_by_hours(req: InvoiceByHoursRequest):
     try:
         today = datetime.now()
         start_of_month = today.replace(day=1).date()
         end_of_month = today.date()
 
-        # Validación si es en dólares
         if req.currency == "USD" and not req.exchange_rate:
             raise HTTPException(status_code=400, detail="Debe enviar exchange_rate si la moneda es USD")
 
-        # Obtener info del cliente
         client_resp = supabase.table("clients").select("*").eq("id", req.client_id).single().execute()
         if not client_resp or not client_resp.data:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
         client = client_resp.data
 
-        # Obtener tareas del cliente con título y área
         tasks_resp = supabase.table("tasks").select("id, title, area").eq("client_id", req.client_id).execute()
         if not tasks_resp or not tasks_resp.data:
             raise HTTPException(status_code=400, detail="El cliente no tiene tareas")
         task_map = {t["id"]: {"title": t["title"], "area": t.get("area", "N/A")} for t in tasks_resp.data}
 
-        # Obtener time entries del mes actual
         time_resp = supabase.table("time_entries")\
-            .select("duration, task_id, user_id, start_time")\
+            .select("id, duration, task_id, user_id, start_time, facturado")\
             .in_("task_id", list(task_map.keys()))\
+            .eq("facturado", False)\
             .gte("start_time", str(start_of_month))\
             .lte("start_time", str(end_of_month))\
             .execute()
+
         if not time_resp or not time_resp.data:
-            raise HTTPException(status_code=400, detail="No hay registros de tiempo este mes")
+            raise HTTPException(status_code=400, detail="No hay registros de tiempo no facturados este mes")
         entries = time_resp.data
 
-        # Obtener usuarios relacionados
         user_ids = list(set([e["user_id"] for e in entries]))
         users_resp = supabase.table("users").select("id, username, cost").in_("id", user_ids).execute()
         if not users_resp or not users_resp.data:
             raise HTTPException(status_code=400, detail="No se encontraron usuarios relacionados")
         user_map = {u["id"]: u for u in users_resp.data}
 
-        # Agrupar por abogado y descripción de tarea
         tasks_details = []
+        entry_ids_to_update = []
+
         for e in entries:
             uid = e["user_id"]
             tid = e["task_id"]
@@ -420,7 +372,6 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
             rate_cop = user_map[uid]["cost"]
             rate = rate_cop
             total = rate_cop * duration
-
             if req.currency == "USD":
                 rate = round(rate_cop / req.exchange_rate, 2)
                 total = round(total / req.exchange_rate, 2)
@@ -433,13 +384,14 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
                 "rate": rate,
                 "total": total
             })
+            entry_ids_to_update.append(e["id"])
 
         subtotal = round(sum([t["total"] for t in tasks_details]), 2)
-        tax = round(subtotal * 0.19, 2)
+        include_tax = getattr(req, "include_tax", True)  # por defecto True si no lo envían
+        tax = round(subtotal * 0.19, 2) if include_tax else 0
         total = round(subtotal + tax, 2)
         currency_symbol = "$" if req.currency == "COP" else "USD"
 
-        # Render HTML con Jinja
         template = env.get_template("invoice_template.html")
         html_out = template.render(
             client=client,
@@ -456,10 +408,8 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
             pdf_path = tmpfile.name
 
-        # ✅ Pasar base_url para resolver correctamente imágenes locales
         HTML(string=html_out, base_url=os.getcwd()).write_pdf(pdf_path)
 
-        # Registrar factura
         supabase.table("invoices").insert({
             "client_id": req.client_id,
             "start_date": str(start_of_month),
@@ -468,10 +418,14 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
             "total_hours": sum([t["duration"] for t in tasks_details]),
             "subtotal": subtotal,
             "tax": tax,
-            "total": total
+            "total": total,
+            "include_tax": include_tax
         }).execute()
 
-        nombre_archivo = f"factura_{client['name'].replace(' ', '_')}_{today.strftime('%Y-%m-%d')}.pdf"
+        for entry_id in entry_ids_to_update:
+            supabase.table("time_entries").update({"facturado": True}).eq("id", entry_id).execute()
+
+        nombre_archivo = f"orden_servicio_{client['name'].replace(' ', '_')}_{today.strftime('%Y-%m-%d')}.pdf"
 
         return FileResponse(
             path=pdf_path,
@@ -483,30 +437,46 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
-
+    
 
 @router.post("/invoices/by-percentage")
-def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
+def generate_order_by_percentage(req: InvoiceByPercentageRequest):
     try:
-        print("🔹 Paso 1: Validación de moneda")
         if req.currency == "USD" and not req.exchange_rate:
             raise HTTPException(status_code=400, detail="Debe enviar exchange_rate si la moneda es USD")
 
-        print("🔹 Paso 2: Obtener cliente")
         client_resp = supabase.table("clients").select("*").eq("id", req.client_id).single().execute()
         if not client_resp or not client_resp.data:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
         client = client_resp.data
 
-        print("🔹 Paso 3: Calcular valores")
-        raw_subtotal = req.total_case_value * (req.percentage / 100)
-        subtotal = round(raw_subtotal, 2) if req.currency == "USD" else round(raw_subtotal, 2)
-        tax = round(subtotal * 0.19, 2)
+        if not req.contract_id:
+            raise HTTPException(status_code=400, detail="Debe enviar contract_id")
+
+        contract_resp = supabase.table("contracts").select("*").eq("id", req.contract_id).eq("client_id", req.client_id).single().execute()
+        if not contract_resp or not contract_resp.data:
+            raise HTTPException(status_code=400, detail="Contrato inválido o no pertenece al cliente")
+        contract = contract_resp.data
+
+        # Calcular valores
+        raw_subtotal = contract["total_value"] * (req.percentage / 100)
+        subtotal = round(raw_subtotal, 2)
+        include_tax = getattr(req, "include_tax", True)
+        tax = round(subtotal * 0.19, 2) if include_tax else 0
         total = round(subtotal + tax, 2)
         currency_symbol = "$" if req.currency == "COP" else "USD"
 
-        print("🔹 Paso 4: Construir tasks_details")
-        formatted_total = format(req.total_case_value, ',.2f')
+        # Buscar facturas anteriores de ese contrato
+        all_resp = supabase.table("invoices")\
+            .select("total, percentage")\
+            .eq("contract_id", req.contract_id)\
+            .eq("billing_type", "percentage")\
+            .execute()
+        total_facturado = sum([r["total"] for r in all_resp.data]) if all_resp.data else 0
+        restante = max(0, contract["total_value"] - total_facturado)
+        porcentaje_acumulado = sum([r["percentage"] for r in all_resp.data]) if all_resp.data else 0
+
+        formatted_total = format(contract["total_value"], ',.2f')
         description = f"{req.payment_type.capitalize()} del {req.percentage}% sobre un valor de {currency_symbol} {formatted_total}"
 
         tasks_details = [{
@@ -518,41 +488,59 @@ def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
             "total": subtotal
         }]
 
-        print("🔹 Paso 5: Renderizar HTML")
+        today = datetime.now()
+        start_of_month = today.replace(day=1).date()
+        end_of_month = today.date()
+
         template = env.get_template("invoice_template.html")
         html_out = template.render(
             client=client,
-            date=datetime.now().strftime("%Y-%m-%d"),
-            start_date=datetime.now().replace(day=1).date(),
-            end_date=datetime.now().date(),
+            date=today.strftime("%Y-%m-%d"),
+            start_date=start_of_month,
+            end_date=end_of_month,
             tasks_details=tasks_details,
             subtotal=subtotal,
             tax=tax,
             total=total,
-            currency_symbol=currency_symbol
+            currency_symbol=currency_symbol,
+            billing_type="percentage",
+            total_facturado=total_facturado,
+            restante=restante
         )
 
-        print("🔹 Paso 6: Generar PDF")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
             pdf_path = tmpfile.name
+
         HTML(string=html_out, base_url=os.getcwd()).write_pdf(pdf_path)
 
-        print("🔹 Paso 7: Registrar factura")
+        # Registrar orden en invoices
         supabase.table("invoices").insert({
             "client_id": req.client_id,
-            "start_date": str(datetime.now().replace(day=1).date()),
-            "end_date": str(datetime.now().date()),
+            "contract_id": req.contract_id,
+            "start_date": str(start_of_month),
+            "end_date": str(end_of_month),
             "billing_type": "percentage",
-            "total_case_value": req.total_case_value,
+            "total_case_value": contract["total_value"],
             "percentage": req.percentage,
             "subtotal": subtotal,
             "tax": tax,
             "total": total,
-            "payment_type": req.payment_type
+            "payment_type": req.payment_type,
+            "include_tax": include_tax
         }).execute()
 
-        nombre_archivo = f"factura_{client['name'].replace(' ', '_')}_{datetime.now().strftime('%Y-%m-%d')}.pdf"
-        print("✅ PDF listo:", nombre_archivo)
+        # 🟦 ACTUALIZAR CONTRATO
+        nuevo_total_pagado = total_facturado + total
+        nuevo_porcentaje_pagado = porcentaje_acumulado + req.percentage
+        activo = nuevo_total_pagado < contract["total_value"]
+
+        supabase.table("contracts").update({
+            "total_pagado": nuevo_total_pagado,
+            "porcentaje_pagado": nuevo_porcentaje_pagado,
+            "active": activo
+        }).eq("id", req.contract_id).execute()
+
+        nombre_archivo = f"orden_servicio_{client['name'].replace(' ', '_')}_{today.strftime('%Y-%m-%d')}.pdf"
 
         return FileResponse(
             path=pdf_path,
@@ -561,12 +549,10 @@ def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
         )
 
     except HTTPException as e:
-        print("❗ HTTP Exception:", e.detail)
         raise e
     except Exception as e:
-        print("❗ Excepción inesperada:", str(e))
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
-
+    
 
 @router.get("/invoices/registry")
 def get_invoice_registry(
@@ -605,7 +591,6 @@ def get_invoice_registry(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
-    
 
 
 

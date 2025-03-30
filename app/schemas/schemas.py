@@ -45,6 +45,7 @@ class TaskUpdate(BaseModel):
     title: Optional[str] = None
     status: Optional[str] = None
     due_date: Optional[str] = None
+    area: Optional[str] = None
 
 class TaskResponse(BaseModel):
     id: int
@@ -104,15 +105,17 @@ class InvoiceByHoursRequest(BaseModel):
     client_id: int
     currency: Literal["COP", "USD"]
     exchange_rate: Optional[float] = None 
+    include_tax: bool = True 
 
     
 class InvoiceByPercentageRequest(BaseModel):
     client_id: int
-    total_case_value: float
-    percentage: float  # entre 0 y 100
+    contract_id: int  
+    percentage: float  
     payment_type: Literal["anticipo", "fracción", "final"]
     currency: Literal["COP", "USD"]
-    exchange_rate: Optional[float] = None 
+    exchange_rate: Optional[float] = None
+    include_tax: bool = True  
 
 class InvoiceFilterRequest(BaseModel):
     client_id: int
@@ -129,3 +132,19 @@ class EventUpdate(BaseModel):
     title: str
     event_date: date
     user_ids: List[int]
+
+
+
+class ContractCreate(BaseModel):
+    client_id: int
+    description: Optional[str] = None
+    total_value: float
+    start_date: date
+    end_date: Optional[date] = None
+
+class ContractUpdate(BaseModel):
+    description: Optional[str] = None
+    total_value: Optional[float] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    active: Optional[bool] = None
