@@ -148,7 +148,11 @@ def get_client_summary():
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
 
-
+@router.get("/get_clients_name")
+def get_clients_name():
+    """Get the name of the clients"""
+    response = supabase.table("clients").select('id',"name").execute()
+    return response.data
 
 
 
