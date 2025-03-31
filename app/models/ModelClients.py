@@ -78,10 +78,21 @@ def read_client_user():
         }
 
 
-def read_clients():
+def read_clients(user_id: int = None):
+    if user_id:
+        # Get client IDs associated with the user
+        client_user_response = supabase.table('client_user').select('client_id').eq('user_id', user_id).execute()
+        
+        if client_user_response.data:
+            client_ids = [item['client_id'] for item in client_user_response.data]
 
-    response = supabase.table('clients').select('*').execute()
-
+            # Filter clients based on the retrieved client IDs
+            response = supabase.table('clients').select('*').in_('id', client_ids).execute()
+        else:
+            return []
+    else:
+        # If user_id is not provided, return all clients
+        response = supabase.table('clients').select('*').execute()
 
     return response.data
 
@@ -148,47 +159,87 @@ def update_client(data: clientUpdate):
 
         if assignments_to_add:
             response = supabase.table('client_user').insert(assignments_to_add).execute()
-            if not response.data:
+            if not response.data: # Check if response.data exists and is not empty
+                # Consider raising HTTPException or logging the error more robustly
                 return {
                     "error": "Error al agregar abogados al cliente",
-                    "details": response.error
+                    "details": getattr(response, 'error', 'Unknown error') # Safely access error
                 }
 
         if assignments_to_remove:
-            response = supabase.table('client_user').delete().or_(assignments_to_remove).execute()
-            if not response.data:
+            # Construct the OR filter string
+            or_filter_parts = []
+            for assignment in assignments_to_remove:
+                cid = assignment['client_id']
+                uid = assignment['user_id']
+                or_filter_parts.append(f"and(client_id.eq.{cid},user_id.eq.{uid})")
+            or_filter_string = ",".join(or_filter_parts)
+
+            response = supabase.table('client_user').delete().or_(or_filter_string).execute()
+            # Check if response.data exists and is not empty (delete often returns the deleted rows)
+            # Also check for errors explicitly if the library provides them
+            if hasattr(response, 'error') and response.error:
+                # Consider raising HTTPException or logging the error more robustly
                 return {
                     "error": "Error al remover abogados del cliente",
                     "details": response.error
                 }
+            elif not response.data: # If no error but also no data, it might mean nothing matched or an issue occurred
+                # Depending on expected behavior, this might not be an error,
+                # but logging it could be useful.
+                print(f"Warning: No rows returned after attempting to delete assignments: {or_filter_string}")
     
     
     
-    if not update_data:
-        return {"error": "No se proporcionaron datos para actualizar"}
-    
-    try:
-        response = supabase.table('clients')\
-            .update(update_data)\
-            .eq('id', client_id)\
-            .execute()
-        
-        if response.data:
-            return {
-                "message": "Cliente actualizado exitosamente",
-                "client": response.data[0]
+    # --- Rest of the function ---
+    # The update logic for the 'clients' table starts here
+    if not update_data and not lawyers: # Check if there's anything to do at all
+         return {"message": "No changes detected for the client."} # Or specific error if needed
+
+    if update_data: # Only update client table if there are changes
+        try:
+            response = supabase.table('clients')\
+                .update(update_data)\
+                .eq('id', client_id)\
+                .execute()
+
+            if hasattr(response, 'error') and response.error:
+                 return {
+                    "error": "Error al actualizar el cliente",
+                    "details": response.error
+                }
+            elif response.data:
+                # Combine results if both client data and lawyers were updated
+                return {
+                    "message": "Cliente actualizado exitosamente",
+                    "client": response.data[0]
+                }
+            else: # No error, but no data returned from update
+                # This might indicate the client_id didn't match any row
+                return {
+                    "error": "Error al actualizar el cliente: Cliente no encontrado o sin cambios.",
+                    "details": "No data returned from update operation."
+                }
+
+        except Exception as e:
+            # Log the exception details
+            print(f"Exception during client update: {e}")
+            raise HTTPException(status_code=500, detail=f"Error interno al actualizar el cliente: {str(e)}")
+    elif lawyers is not None: # Only lawyer changes were made
+        # If only lawyer assignments changed, return a success message for that
+        # We need to fetch the updated client data to return it consistently
+        client_response = supabase.table('clients').select('*').eq('id', client_id).maybe_single().execute()
+        if client_response.data:
+             return {
+                "message": "Asignaciones de abogados actualizadas exitosamente.",
+                "client": client_response.data
             }
         else:
-            return {
-                "error": "Error al actualizar el cliente",
-                "details": response.error
-            }
-        
-    except Exception as e:
-        return {
-            "error": "Error al actualizar el cliente",
-            "details": str(e)
-        }
+            # This case should ideally not happen if client_id is valid, but handle defensively
+            return {"error": "Cliente no encontrado después de actualizar abogados."}
+
+    # This return should ideally not be reached if logic above is correct
+    return {"error": "Estado inesperado al final de la función de actualización."}
     
 
 def remove_client(id: int):

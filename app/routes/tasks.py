@@ -30,18 +30,23 @@ async def create_task_endpoint(task_data: TaskCreate,  token: str = Depends(oaut
 
 
 @router.get("/get_task")
-async def get_tasks_endpoint( token: str = Depends(oauth2_scheme)):
-
-    """ get all the tasks """
+async def get_tasks_endpoint(token: str = Depends(oauth2_scheme)):
+    """get all the tasks"""
 
     user_data = payload(token)
-        
 
     if not user_data or "id" not in user_data:
         raise HTTPException(status_code=401, detail="Usuario no autenticado")
 
+    user_id = user_data.get("id")
+    user_role = user_data.get("role")  # Assuming the role is in the payload
 
-    return get_all_tasks()
+    if user_role == "consultor":
+        response = get_all_tasks(user_id=user_id)
+    else:
+        response = get_all_tasks()
+
+    return response
 
 
 @router.get("/get_tasks_by_user")
