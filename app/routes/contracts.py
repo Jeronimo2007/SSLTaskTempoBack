@@ -19,7 +19,13 @@ def get_contracts_by_client(client_id: int):
         .execute()
     return response.data
 
-# 🔹 CREAR NUEVO CONTRATO
+
+@router.get('/contracts')
+def get_contracts():
+    response = supabase.table("contracts").select("*").execute()
+    return response.data
+
+
 @router.post("/create")
 def create_contract(data: ContractCreate):
     response = supabase.table("contracts").insert({
