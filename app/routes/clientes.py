@@ -54,19 +54,21 @@ async def get_client_user(token: str = Depends(oauth2_scheme)):
 
 
 @router.get('/get_clients_admin')
-async def get_clients_admin( token: str = Depends(oauth2_scheme)):
-
-    """ Get all the clients in the database """
-
+async def get_clients_admin(token: str = Depends(oauth2_scheme)):
+    """Get all or assigned clients based on user role."""
 
     user_data = payload(token)
-
 
     if not user_data:
         raise HTTPException(status_code=401, detail="Usuario no autenticado")
 
+    user_id = user_data.get("id")
+    user_role = user_data.get("role")  # Assuming the role is in the payload
 
-    response = read_clients()
+    if user_role == "consultor":
+        response = read_clients(user_id=user_id)
+    else:
+        response = read_clients()
 
     return response
 

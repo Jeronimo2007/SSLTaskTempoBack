@@ -33,17 +33,30 @@ def create_task(task_data: TaskCreate):
         return {"error": response.error}
 
 
-def get_all_tasks():
-    """ get the task with the client and the user assigned """
+def get_all_tasks(user_id: int = None):
+    """get the task with the client and the user assigned"""
 
-    response = supabase.table("tasks").select(
-        "id, title, status, due_date, client_id, clients(name), area"
-    ).execute()
+    if user_id:
+        # Get client IDs associated with the user
+        client_user_response = supabase.table('client_user').select('client_id').eq('user_id', user_id).execute()
+
+        if client_user_response.data:
+            client_ids = [item['client_id'] for item in client_user_response.data]
+
+            # Filter tasks based on the retrieved client IDs
+            response = supabase.table("tasks").select(
+                "id, title, status, due_date, client_id, clients(name), area"
+            ).in_('client_id', client_ids).execute()
+        else:
+            return []
+    else:
+        response = supabase.table("tasks").select(
+            "id, title, status, due_date, client_id, clients(name), area"
+        ).execute()
 
     if not response.data:
         return []
 
-   
     tasks = [
         {
             "id": task["id"],
@@ -131,7 +144,7 @@ def assigned_tasks(user_id: int):
         response_task = supabase.table("tasks").select("id, client_id").in_("client_id", client_ids).execute()
 
         if not response_task.data:
-            raise HTTPException(status_code=404, detail="No se encontraron tareas asignadas a los clientes del usuario")
+            return []
         
         # Return the task IDs along with their associated client IDs
         return [{"task_id": task["id"], "client_id": task["client_id"]} for task in response_task.data]

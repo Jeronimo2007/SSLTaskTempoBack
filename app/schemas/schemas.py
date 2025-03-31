@@ -39,6 +39,7 @@ class TaskCreate(BaseModel):
     title: str 
     status: str
     due_date: datetime
+    area: str
 
 class TaskUpdate(BaseModel):
     id: int
