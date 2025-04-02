@@ -85,14 +85,13 @@ def read_clients(user_id: int = None):
         
         if client_user_response.data:
             client_ids = [item['client_id'] for item in client_user_response.data]
-
-            # Filter clients based on the retrieved client IDs
-            response = supabase.table('clients').select('*').in_('id', client_ids).execute()
+            # Filter clients based on the retrieved client IDs and active status
+            response = supabase.table('clients').select('*').in_('id', client_ids).eq('active', True).execute()
         else:
             return []
     else:
-        # If user_id is not provided, return all clients
-        response = supabase.table('clients').select('*').execute()
+        # If user_id is not provided, return all active clients
+        response = supabase.table('clients').select('*').eq('active', True).execute()
 
     return response.data
 
@@ -278,3 +277,4 @@ def get_relation_client_user(id: int):
             'error': 'Error al obtener la relación entre clientes y abogados',
             'details': str(e)
         }
+

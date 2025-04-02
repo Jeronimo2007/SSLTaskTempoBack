@@ -1,5 +1,3 @@
-
-
 from datetime import datetime
 from typing import Optional
 
@@ -43,16 +41,17 @@ def get_all_tasks(user_id: int = None):
         if client_user_response.data:
             client_ids = [item['client_id'] for item in client_user_response.data]
 
-            # Filter tasks based on the retrieved client IDs
+            # Filter tasks based on the retrieved client IDs and active clients
             response = supabase.table("tasks").select(
-                "id, title, status, due_date, client_id, clients(name), area"
-            ).in_('client_id', client_ids).execute()
+                "id, title, status, due_date, client_id, clients!inner(name, active), area"
+            ).in_('client_id', client_ids).eq('clients.active', True).execute()
         else:
             return []
     else:
+        # Get all tasks from active clients
         response = supabase.table("tasks").select(
-            "id, title, status, due_date, client_id, clients(name), area"
-        ).execute()
+            "id, title, status, due_date, client_id, clients!inner(name, active), area"
+        ).eq('clients.active', True).execute()
 
     if not response.data:
         return []
@@ -139,9 +138,11 @@ def assigned_tasks(user_id: int):
         if not response_relation.data:
             raise HTTPException(status_code=404, detail="No se encontraron clientes asignados al usuario")
         
-        # Get the task IDs associated with the retrieved client IDs
+        # Get the task IDs associated with the retrieved client IDs and active clients
         client_ids = [client["client_id"] for client in response_relation.data]
-        response_task = supabase.table("tasks").select("id, client_id").in_("client_id", client_ids).execute()
+        response_task = supabase.table("tasks").select(
+            "id, client_id, clients!inner(active)"
+        ).in_("client_id", client_ids).eq('clients.active', True).execute()
 
         if not response_task.data:
             return []
@@ -151,5 +152,3 @@ def assigned_tasks(user_id: int):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener las tareas asignadas: {str(e)}")
-
-    return response.data if response.data else []
