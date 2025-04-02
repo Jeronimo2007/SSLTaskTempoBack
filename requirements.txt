@@ -8,3 +8,4 @@ python_dateutil==2.9.0.post0
 python_jose==3.4.0
 supabase==2.15.0
 weasyprint==65.0
+uvicorn[standard]==0.29.0
