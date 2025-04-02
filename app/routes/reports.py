@@ -328,8 +328,13 @@ async def get_time_entries(data: ClientReportRequestTimeEntries, user: dict = De
 def generate_order_by_hours(req: InvoiceByHoursRequest):
     try:
         today = datetime.now()
-        start_of_month = today.replace(day=1).date()
-        end_of_month = today.date()
+        # Calculate first day of current month
+        first_day_current_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        # Calculate first day of last month
+        if today.month == 1:
+            first_day_last_month = today.replace(year=today.year - 1, month=12, day=1, hour=1, minute=0, second=0, microsecond=0)
+        else:
+            first_day_last_month = today.replace(month=today.month - 1, day=1, hour=1, minute=0, second=0, microsecond=0)
 
         if req.currency == "USD" and not req.exchange_rate:
             raise HTTPException(status_code=400, detail="Debe enviar exchange_rate si la moneda es USD")
@@ -348,16 +353,16 @@ def generate_order_by_hours(req: InvoiceByHoursRequest):
             .select("id, duration, task_id, user_id, start_time, facturado")\
             .in_("task_id", list(task_map.keys()))\
             .eq("facturado", False)\
-            .gte("start_time", str(start_of_month))\
-            .lte("start_time", str(end_of_month))\
+            .gte("start_time", first_day_last_month.isoformat())\
+            .lt("start_time", first_day_current_month.isoformat())\
             .execute()
 
         if not time_resp or not time_resp.data:
-            raise HTTPException(status_code=400, detail="No hay registros de tiempo no facturados este mes")
+            raise HTTPException(status_code=400, detail="No hay registros de tiempo no facturados en el período seleccionado")
         entries = time_resp.data
 
         user_ids = list(set([e["user_id"] for e in entries]))
-        users_resp = supabase.table("users").select("id, username, cost").in_("id", user_ids).execute()
+        users_resp = supabase.table("users").select("id, username, cost, desvinculado").in_("id", user_ids).execute()
         if not users_resp or not users_resp.data:
             raise HTTPException(status_code=400, detail="No se encontraron usuarios relacionados")
         user_map = {u["id"]: u for u in users_resp.data}
@@ -376,8 +381,12 @@ def generate_order_by_hours(req: InvoiceByHoursRequest):
                 rate = round(rate_cop / req.exchange_rate, 2)
                 total = round(total / req.exchange_rate, 2)
 
+            username = user_map[uid]["username"]
+            if user_map[uid].get("desvinculado"):
+                username = f"{username} (desvinculado)"
+
             tasks_details.append({
-                "username": user_map[uid]["username"],
+                "username": username,
                 "description": task_map[tid]["title"],
                 "area": task_map[tid]["area"],
                 "duration": duration,
@@ -396,8 +405,8 @@ def generate_order_by_hours(req: InvoiceByHoursRequest):
         html_out = template.render(
             client=client,
             date=today.strftime("%Y-%m-%d"),
-            start_date=start_of_month,
-            end_date=end_of_month,
+            start_date=first_day_last_month.strftime("%Y-%m-%d"),
+            end_date=first_day_current_month.strftime("%Y-%m-%d"),
             tasks_details=tasks_details,
             subtotal=subtotal,
             tax=tax,
@@ -412,8 +421,8 @@ def generate_order_by_hours(req: InvoiceByHoursRequest):
 
         supabase.table("invoices").insert({
             "client_id": req.client_id,
-            "start_date": str(start_of_month),
-            "end_date": str(end_of_month),
+            "start_date": first_day_last_month.isoformat(),
+            "end_date": first_day_current_month.isoformat(),
             "billing_type": "hourly",
             "total_hours": sum([t["duration"] for t in tasks_details]),
             "subtotal": subtotal,
