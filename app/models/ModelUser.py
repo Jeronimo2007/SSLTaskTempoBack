@@ -46,3 +46,14 @@ def get_all_users():
     else:
         return None
 
+def get_all_user_with_desvinculated():
+    """Get all users for the client sections including the desvicunlated"""
+    response = supabase.table("users").select('*').execute()
+
+    users = response.data
+    for user in users:
+        if user.get("desvinculado"):
+            user["username"] += " (Desvinculado)"
+
+            
+    return users
