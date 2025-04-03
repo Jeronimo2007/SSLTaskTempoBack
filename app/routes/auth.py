@@ -1,7 +1,7 @@
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from app.models.ModelUser import create_user, get_all_users, get_user, ROLE_CODES
+from app.models.ModelUser import create_user, get_all_user_with_desvinculated, get_all_users, get_user, ROLE_CODES
 from app.services.utils import create_access_token, get_current_user, verify_password
 from pydantic import BaseModel
 
@@ -63,5 +63,16 @@ async def read_all_users(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     response = get_all_users()
+
+    return response
+
+
+@router.get('/get_users_B')
+def get_users_including_desvinculated(user: dict = Depends(get_current_user)):
+
+    if not user:
+        raise HTTPException(status_code= 404, detail= "usuario no encontrado")
+    
+    response = get_all_user_with_desvinculated()
 
     return response
