@@ -32,4 +32,4 @@ docker-compose.override.yml
 # Supabase (si usas credenciales locales)
 supabase/
 
-.qodo
+.qodoapp/.env
