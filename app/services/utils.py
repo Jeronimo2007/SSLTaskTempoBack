@@ -31,7 +31,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         if id is None:
             raise HTTPException(status_code=401, detail="Token inválido")
         
-        response = supabase.table("users").select("id, username, role").eq("id", id).execute()
+        response = supabase.table("users").select("id, username, role, email").eq("id", id).execute()
 
         if not response.data or len(response.data) == 0:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -97,3 +97,11 @@ def role_required(allowed_roles: list):
         return user  
     
     return check_role
+
+
+def get_user_by_email(email: str):
+    """ Get user by email """
+    response = supabase.table("users").select("id, username, role, email").eq("email", email).execute()
+    if not response.data or len(response.data) == 0:
+        return None
+    return response.data[0]

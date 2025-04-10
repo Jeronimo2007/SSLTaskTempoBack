@@ -32,19 +32,15 @@ async def register_user(user_data: UserCreate):
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """Verify credentials and returns the acces token"""
 
-    
-
-
-    user = get_user(form_data.username)
+    user = get_user(form_data.username)  # OAuth2PasswordRequestForm uses username field for email
     if not user or not verify_password(form_data.password, user["hashed_password"]):
-        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+        raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
 
-    
     access_token = create_access_token(
         data={"sub": user["id"], "role": user["role"]}
     )
 
-    return {"access_token": access_token, "token_type": "bearer", "role": user["role"],"user_id": user['id'], "username": user['username']}
+    return {"access_token": access_token, "token_type": "bearer", "role": user["role"],"user_id": user['id'], "username": user['username'], "email": user['email']}
 
 @router.get("/me", status_code=status.HTTP_200_OK)
 async def read_current_user(user: dict = Depends(get_current_user)):
@@ -52,7 +48,7 @@ async def read_current_user(user: dict = Depends(get_current_user)):
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    return {"id": user["id"], "username": user["username"], "role": user["role"]}
+    return {"id": user["id"], "username": user["username"], "role": user["role"], "email": user["email"]}
 
 
 @router.get("/get_all_users")

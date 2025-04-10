@@ -29,13 +29,13 @@ def create_user(username: str, password: str, role_code: str):
     else:
         return {"error": "Error al crear el usuario", "details": response.error}
 
-def get_user(username: str):
-    """ Get all the data of a user by username, excluding those marked as 'desvinculado' """
-    response = supabase.table("users").select("id,username,hashed_password,role,desvinculado").eq("username", username).neq("desvinculado", True).execute()
+def get_user(email: str):
+    """ Get all the data of a user by email, excluding those marked as 'desvinculado' """
+    response = supabase.table("users").select("id,username,hashed_password,role,desvinculado,email").eq("email", email).neq("desvinculado", True).execute()
     if response.data:
         return response.data[0]  
     else:
-        return None  
+        return None
 
 
 def get_all_users():

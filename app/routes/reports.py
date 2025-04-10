@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import List
 from datetime import datetime
 from app.database.data import supabase
-from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest
+from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest, TaskReportRequest
 from app.services.utils import role_required
 import pandas as pd
 import io
@@ -276,6 +276,105 @@ async def download_client_report(
     )
 
 
+@router.post("/download_task_report")
+async def download_task_report(
+    request: TaskReportRequest,
+    user: dict = Depends(role_required(["socio", "senior", "consultor"]))
+):
+    """Download a detailed report of time entries for a specific task"""
+
+    # Obtener la tarea
+    task_response = supabase.table("tasks") \
+        .select("id, title, billing_type, percentage_billed") \
+        .eq("id", request.task_id) \
+        .single() \
+        .execute()
+
+    if not task_response.data:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    task = task_response.data
+    task_title = task["title"]
+    billing_type = task.get("billing_type", "hourly")
+    percentage_billed = task.get("percentage_billed", 0)
+
+    # Obtener time entries relacionados
+    entries_response = supabase.table("time_entries") \
+        .select("description, start_time, duration, facturado") \
+        .eq("task_id", request.task_id) \
+        .execute()
+
+    entries = entries_response.data
+    if not entries:
+        raise HTTPException(status_code=404, detail="No hay registros de tiempo para esta tarea")
+
+    # Preparar datos para Excel
+    excel_data = []
+    for entry in entries:
+        if billing_type == "percentage":
+            if percentage_billed >= 100:
+                estado = "si"
+            elif percentage_billed > 0:
+                estado = "parcialmente"
+            else:
+                estado = "no"
+        else:
+            estado = "si" if entry.get("facturado") else "no"
+
+        excel_data.append({
+            "Descripción": entry.get("description", ""),
+            "Fecha": entry.get("start_time", "")[:10],
+            "Duración (h)": round(entry.get("duration", 0), 2),
+            "Estado de Facturación": estado
+        })
+
+    df = pd.DataFrame(excel_data)
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, sheet_name="Entradas", index=False, startrow=1)
+        workbook = writer.book
+        worksheet = writer.sheets["Entradas"]
+
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'vcenter',
+            'align': 'center',
+            'fg_color': '#D7E4BC',
+            'border': 1
+        })
+
+        cell_format = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter'
+        })
+
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(1, col_num, value, header_format)
+            worksheet.set_column(col_num, col_num, 20)
+
+        worksheet.merge_range('A1:D1', f"Desglose de Tiempos - {task_title}", workbook.add_format({
+            'bold': True,
+            'font_size': 14,
+            'align': 'center',
+            'valign': 'vcenter'
+        }))
+
+        for row in range(len(df)):
+            for col in range(len(df.columns)):
+                value = df.iloc[row, col]
+                worksheet.write(row + 2, col, value, cell_format)
+
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=desglose_tarea_{task_title.replace(' ', '_')}.xlsx"}
+    )
+
+
 @router.post("/get_time_entries")
 async def get_time_entries(data: ClientReportRequestTimeEntries, user: dict = Depends(role_required(["socio", "senior", "consultor"]))):
     """ get the time entries by client """
@@ -325,237 +424,155 @@ async def get_time_entries(data: ClientReportRequestTimeEntries, user: dict = De
         raise HTTPException(status_code=500, detail=f"Error al obtener los registros de tiempo: {str(e)}")
     
 @router.post("/invoices/by-hours")
-def generate_order_by_hours(req: InvoiceByHoursRequest):
+def generate_invoice_by_hours(req: InvoiceByHoursRequest):
     try:
         today = datetime.now()
-        # Calculate first day of current month
-        first_day_current_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        # Calculate first day of last month
-        if today.month == 1:
-            first_day_last_month = today.replace(year=today.year - 1, month=12, day=1, hour=1, minute=0, second=0, microsecond=0)
-        else:
-            first_day_last_month = today.replace(month=today.month - 1, day=1, hour=1, minute=0, second=0, microsecond=0)
 
         if req.currency == "USD" and not req.exchange_rate:
             raise HTTPException(status_code=400, detail="Debe enviar exchange_rate si la moneda es USD")
 
-        client_resp = supabase.table("clients").select("*").eq("id", req.client_id).single().execute()
-        if not client_resp or not client_resp.data:
-            raise HTTPException(status_code=404, detail="Cliente no encontrado")
-        client = client_resp.data
+        # Verificar tarea
+        task_resp = supabase.table("tasks").select("id, title").eq("id", req.task_id).single().execute()
+        if not task_resp or not task_resp.data:
+            raise HTTPException(status_code=404, detail="Tarea no encontrada")
 
-        tasks_resp = supabase.table("tasks").select("id, title, area").eq("client_id", req.client_id).execute()
-        if not tasks_resp or not tasks_resp.data:
-            raise HTTPException(status_code=400, detail="El cliente no tiene tareas")
-        task_map = {t["id"]: {"title": t["title"], "area": t.get("area", "N/A")} for t in tasks_resp.data}
-
+        # Obtener time entries no facturados para la tarea
         time_resp = supabase.table("time_entries")\
-            .select("id, duration, task_id, user_id, start_time, facturado")\
-            .in_("task_id", list(task_map.keys()))\
-            .eq("facturado", False)\
-            .gte("start_time", first_day_last_month.isoformat())\
-            .lt("start_time", first_day_current_month.isoformat())\
+            .select("duration, user_id")\
+            .eq("task_id", req.task_id)\
+            .eq("estado_facturacion", "no")\
             .execute()
 
         if not time_resp or not time_resp.data:
-            raise HTTPException(status_code=400, detail="No hay registros de tiempo no facturados en el período seleccionado")
+            raise HTTPException(status_code=400, detail="No hay registros de tiempo sin facturar para esta tarea")
         entries = time_resp.data
 
+        # Obtener usuarios relacionados
         user_ids = list(set([e["user_id"] for e in entries]))
-        users_resp = supabase.table("users").select("id, username, cost, desvinculado").in_("id", user_ids).execute()
+        users_resp = supabase.table("users").select("id, cost").in_("id", user_ids).execute()
         if not users_resp or not users_resp.data:
             raise HTTPException(status_code=400, detail="No se encontraron usuarios relacionados")
         user_map = {u["id"]: u for u in users_resp.data}
 
-        tasks_details = []
-        entry_ids_to_update = []
-
+        # Calcular totales por usuario
+        subtotal = 0
+        total_hours = 0
         for e in entries:
             uid = e["user_id"]
-            tid = e["task_id"]
             duration = round(e["duration"], 2)
-            rate_cop = user_map[uid]["cost"]
-            rate = rate_cop
-            total = rate_cop * duration
+            rate = user_map[uid]["cost"]
+            total = duration * rate
+
             if req.currency == "USD":
-                rate = round(rate_cop / req.exchange_rate, 2)
                 total = round(total / req.exchange_rate, 2)
 
-            username = user_map[uid]["username"]
-            if user_map[uid].get("desvinculado"):
-                username = f"{username} (desvinculado)"
+            subtotal += total
+            total_hours += duration
 
-            tasks_details.append({
-                "username": username,
-                "description": task_map[tid]["title"],
-                "area": task_map[tid]["area"],
-                "duration": duration,
-                "rate": rate,
-                "total": total
-            })
-            entry_ids_to_update.append(e["id"])
-
-        subtotal = round(sum([t["total"] for t in tasks_details]), 2)
-        include_tax = getattr(req, "include_tax", True)  # por defecto True si no lo envían
-        tax = round(subtotal * 0.19, 2) if include_tax else 0
+        subtotal = round(subtotal, 2)
+        tax = round(subtotal * 0.19, 2) if req.include_tax else 0
         total = round(subtotal + tax, 2)
-        currency_symbol = "$" if req.currency == "COP" else "USD"
 
-        template = env.get_template("invoice_template.html")
-        html_out = template.render(
-            client=client,
-            date=today.strftime("%Y-%m-%d"),
-            start_date=first_day_last_month.strftime("%Y-%m-%d"),
-            end_date=first_day_current_month.strftime("%Y-%m-%d"),
-            tasks_details=tasks_details,
-            subtotal=subtotal,
-            tax=tax,
-            total=total,
-            currency_symbol=currency_symbol
-        )
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
-            pdf_path = tmpfile.name
-
-        HTML(string=html_out, base_url=os.getcwd()).write_pdf(pdf_path)
-
+        # Registrar orden de servicio (invoice)
         supabase.table("invoices").insert({
             "client_id": req.client_id,
-            "start_date": first_day_last_month.isoformat(),
-            "end_date": first_day_current_month.isoformat(),
+            "task_id": req.task_id,
+            "start_date": str(today.replace(day=1).date()),
+            "end_date": str(today.date()),
+            "issued_at": today.isoformat(),
             "billing_type": "hourly",
-            "total_hours": sum([t["duration"] for t in tasks_details]),
+            "total_hours": total_hours,
             "subtotal": subtotal,
             "tax": tax,
             "total": total,
-            "include_tax": include_tax
+            "currency": req.currency,
+            "exchange_rate": req.exchange_rate,
+            "include_tax": req.include_tax
         }).execute()
 
-        for entry_id in entry_ids_to_update:
-            supabase.table("time_entries").update({"facturado": True}).eq("id", entry_id).execute()
+        # Marcar time_entries como facturados
+        supabase.table("time_entries").update({"estado_facturacion": "si"}).eq("task_id", req.task_id).eq("estado_facturacion", "no").execute()
 
-        nombre_archivo = f"orden_servicio_{client['name'].replace(' ', '_')}_{today.strftime('%Y-%m-%d')}.pdf"
-
-        return FileResponse(
-            path=pdf_path,
-            filename=nombre_archivo,
-            media_type="application/pdf"
-        )
+        return {
+            "message": "Orden de servicio por horas registrada correctamente.",
+            "total_hours": total_hours,
+            "subtotal": subtotal,
+            "tax": tax,
+            "total": total
+        }
 
     except HTTPException as e:
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
     
 
 @router.post("/invoices/by-percentage")
-def generate_order_by_percentage(req: InvoiceByPercentageRequest):
+def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
     try:
         if req.currency == "USD" and not req.exchange_rate:
             raise HTTPException(status_code=400, detail="Debe enviar exchange_rate si la moneda es USD")
 
-        client_resp = supabase.table("clients").select("*").eq("id", req.client_id).single().execute()
-        if not client_resp or not client_resp.data:
-            raise HTTPException(status_code=404, detail="Cliente no encontrado")
-        client = client_resp.data
+        task_resp = supabase.table("tasks").select("*", count="exact").eq("id", req.task_id).single().execute()
+        if not task_resp or not task_resp.data:
+            raise HTTPException(status_code=404, detail="Tarea no encontrada")
+        task = task_resp.data
 
-        if not req.contract_id:
-            raise HTTPException(status_code=400, detail="Debe enviar contract_id")
+        total_case_value = task.get("total_value")
+        if total_case_value is None:
+            raise HTTPException(status_code=400, detail="La tarea no tiene un valor total definido")
 
-        contract_resp = supabase.table("contracts").select("*").eq("id", req.contract_id).eq("client_id", req.client_id).single().execute()
-        if not contract_resp or not contract_resp.data:
-            raise HTTPException(status_code=400, detail="Contrato inválido o no pertenece al cliente")
-        contract = contract_resp.data
-
-        # Calcular valores
-        raw_subtotal = contract["total_value"] * (req.percentage / 100)
-        subtotal = round(raw_subtotal, 2)
-        include_tax = getattr(req, "include_tax", True)
-        tax = round(subtotal * 0.19, 2) if include_tax else 0
+        billed_raw = total_case_value * (req.percentage / 100)
+        subtotal = round(billed_raw if req.currency == "COP" else billed_raw / req.exchange_rate, 2)
+        tax = round(subtotal * 0.19, 2)
         total = round(subtotal + tax, 2)
+
+        now = datetime.now()
         currency_symbol = "$" if req.currency == "COP" else "USD"
 
-        # Buscar facturas anteriores de ese contrato
-        all_resp = supabase.table("invoices")\
-            .select("total, percentage")\
-            .eq("contract_id", req.contract_id)\
-            .eq("billing_type", "percentage")\
-            .execute()
-        total_facturado = sum([r["total"] for r in all_resp.data]) if all_resp.data else 0
-        restante = max(0, contract["total_value"] - total_facturado)
-        porcentaje_acumulado = sum([r["percentage"] for r in all_resp.data]) if all_resp.data else 0
-
-        formatted_total = format(contract["total_value"], ',.2f')
-        description = f"{req.payment_type.capitalize()} del {req.percentage}% sobre un valor de {currency_symbol} {formatted_total}"
-
-        tasks_details = [{
-            "username": "—",
-            "area": "—",
-            "description": description,
-            "duration": "—",
-            "rate": "—",
-            "total": subtotal
-        }]
-
-        today = datetime.now()
-        start_of_month = today.replace(day=1).date()
-        end_of_month = today.date()
-
-        template = env.get_template("invoice_template.html")
-        html_out = template.render(
-            client=client,
-            date=today.strftime("%Y-%m-%d"),
-            start_date=start_of_month,
-            end_date=end_of_month,
-            tasks_details=tasks_details,
-            subtotal=subtotal,
-            tax=tax,
-            total=total,
-            currency_symbol=currency_symbol,
-            billing_type="percentage",
-            total_facturado=total_facturado,
-            restante=restante
-        )
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
-            pdf_path = tmpfile.name
-
-        HTML(string=html_out, base_url=os.getcwd()).write_pdf(pdf_path)
-
-        # Registrar orden en invoices
+        # Registrar orden de servicio (invoice)
         supabase.table("invoices").insert({
             "client_id": req.client_id,
-            "contract_id": req.contract_id,
-            "start_date": str(start_of_month),
-            "end_date": str(end_of_month),
+            "task_id": req.task_id,
+            "start_date": str(now.replace(day=1).date()),
+            "end_date": str(now.date()),
+            "issued_at": now.isoformat(),
             "billing_type": "percentage",
-            "total_case_value": contract["total_value"],
             "percentage": req.percentage,
             "subtotal": subtotal,
             "tax": tax,
             "total": total,
             "payment_type": req.payment_type,
-            "include_tax": include_tax
+            "total_case_value": total_case_value,
+            "currency": req.currency,
+            "exchange_rate": req.exchange_rate
         }).execute()
 
-        # 🟦 ACTUALIZAR CONTRATO
-        nuevo_total_pagado = total_facturado + total
-        nuevo_porcentaje_pagado = porcentaje_acumulado + req.percentage
-        activo = nuevo_total_pagado < contract["total_value"]
+        # Actualizar progreso de facturación en la tarea
+        new_percentage = round(task.get("percentage_billed", 0) + req.percentage, 2)
+        new_total = round(task.get("total_billed", 0) + total, 2)
 
-        supabase.table("contracts").update({
-            "total_pagado": nuevo_total_pagado,
-            "porcentaje_pagado": nuevo_porcentaje_pagado,
-            "active": activo
-        }).eq("id", req.contract_id).execute()
+        update_fields = {
+            "percentage_billed": new_percentage,
+            "total_billed": new_total
+        }
 
-        nombre_archivo = f"orden_servicio_{client['name'].replace(' ', '_')}_{today.strftime('%Y-%m-%d')}.pdf"
+        if new_percentage >= 100:
+            supabase.table("time_entries").update({"estado_facturacion": "si"}).eq("task_id", req.task_id).execute()
+        elif new_percentage > 0:
+            supabase.table("time_entries").update({"estado_facturacion": "parcialmente"}).eq("task_id", req.task_id).execute()
 
-        return FileResponse(
-            path=pdf_path,
-            filename=nombre_archivo,
-            media_type="application/pdf"
-        )
+        supabase.table("tasks").update(update_fields).eq("id", req.task_id).execute()
+
+        return {
+            "message": "Orden de servicio por porcentaje registrada correctamente.",
+            "subtotal": subtotal,
+            "tax": tax,
+            "total": total,
+            "currency": currency_symbol,
+            "billed_percentage": new_percentage
+        }
 
     except HTTPException as e:
         raise e
@@ -600,7 +617,6 @@ def get_invoice_registry(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
-
 
 
 

@@ -1,13 +1,32 @@
 
 from app.database.data import supabase
-from datetime import datetime
-from app.schemas.schemas import TimeEntryCreate, TimeEntryUpdate, getEntries
+from datetime import datetime, timedelta
+from app.schemas.schemas import TimeEntryCreate, TimeEntryCreateByTime, TimeEntryUpdate, getEntries
 
 
 def calculate_duration(start_time: datetime, end_time: datetime) -> float:
     """ return the duration in hours """
 
     return (end_time - start_time).total_seconds() / 3600
+
+
+
+def create_time_entry_by_time(data:TimeEntryCreateByTime):
+    """create a time entry by time"""
+
+    end_time = data.start_time + timedelta(hours=data.duration)
+
+    response = supabase.table("time_entries").insert({
+        "task_id": data.task_id,
+        "user_id": data.user_id,
+        "start_time": data.start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "description": data.description
+
+    }).execute()
+
+    if response.data: return response.data[0]
+    else: return {"error": response.error}
 
 
 def create_time_entry(user_id: int, entry_data: TimeEntryCreate):

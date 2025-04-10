@@ -18,7 +18,6 @@ def create_task(task_data: TaskCreate):
     """ creates a new task in the database """
 
     task_dict = task_data.dict()
-    task_dict["due_date"] = format_datetime(task_data.due_date)
 
     response = supabase.table("tasks").insert(task_dict).execute()
 
@@ -29,6 +28,35 @@ def create_task(task_data: TaskCreate):
     else:
 
         return {"error": response.error}
+
+
+def get_all_tasks_by_client(client_id: int):
+    """get all task from de client id"""
+
+    response = supabase.table("tasks").select(
+        "id, title, status, due_date, client_id, clients!inner(name, active), area"
+    ).eq("client_id", client_id).eq('clients.active', True).execute()
+
+
+    if not response.data:
+        return HTTPException(status_code=404, detail="No se encontraron tareas para el cliente proporcionado")
+    
+
+    tasks = [
+        {
+            "id": task["id"],
+            "title": task["title"],
+            "status": task["status"],
+            "due_date": task["due_date"],
+            "client": task["clients"]["name"] if task["clients"] else "Sin Cliente",
+            "area": task.get("area"),
+            "billing_type": task.get("billing_type"),
+            "note": task.get("note"),
+            "total_value": task.get("total_value")
+        }
+        for task in response.data
+    ]
+    return tasks
 
 
 def get_all_tasks(user_id: int = None):
@@ -63,7 +91,10 @@ def get_all_tasks(user_id: int = None):
             "status": task["status"],
             "due_date": task["due_date"],
             "client": task["clients"]["name"] if task["clients"] else "Sin Cliente",
-            "area": task["area"]
+            "area": task.get("area"),
+            "billing_type": task.get("billing_type"),
+            "note": task.get("note"),
+            "total_value": task.get("total_value")
         }
         for task in response.data
     ]

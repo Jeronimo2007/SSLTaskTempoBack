@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
 from fastapi.security import OAuth2PasswordBearer
-from app.models.ModelTasks import create_task, delete_task, get_all_tasks, get_tasks_by_user_id, update_task, assigned_tasks
+from app.models.ModelTasks import create_task, delete_task, get_all_tasks, get_all_tasks_by_client, get_tasks_by_user_id, update_task, assigned_tasks
 from app.schemas.schemas import TaskCreate, TaskResponse, TaskUpdate
 from app.services.utils import get_current_user, payload, role_required
 
@@ -47,6 +47,26 @@ async def get_tasks_endpoint(token: str = Depends(oauth2_scheme)):
         response = get_all_tasks()
 
     return response
+
+
+
+@router.get('/get_tasks_by_client')
+async def get_tasks_by_client(client_id: int):
+    """
+    Get all tasks by client ID.
+    """
+    try:
+        # Llamar a la función get_tasks_by_client con el client_id proporcionado
+        response = get_all_tasks_by_client(client_id=client_id)
+        return response
+
+    except HTTPException as e:
+        # Re-lanzar excepciones HTTP conocidas
+        raise e
+    except Exception as e:
+        # Manejo genérico de errores
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+    
 
 
 @router.get("/get_tasks_by_user")

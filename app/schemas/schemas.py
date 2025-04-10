@@ -34,12 +34,16 @@ class clientDelete(BaseModel):
     id: int
 
 
+
 class TaskCreate(BaseModel):
     client_id: int
-    title: str 
+    title: str
+    billing_type: Literal["hourly", "percentage"]
     status: str
-    due_date: datetime
-    area: str
+    area: Optional[str] = "Sin área"
+    note: Optional[str] = None
+    total_value: Optional[float] = Field(default=None, description="Requerido si billing_type es 'percentage'")
+
 
 class TaskUpdate(BaseModel):
     id: int
@@ -47,6 +51,9 @@ class TaskUpdate(BaseModel):
     status: Optional[str] = None
     due_date: Optional[str] = None
     area: Optional[str] = None
+    billing_type: Optional[Literal["hourly", "percentage"]] = None
+    note: Optional[str] = None
+    total_value: Optional[float] = None
 
 class TaskResponse(BaseModel):
     id: int
@@ -58,6 +65,17 @@ class TaskResponse(BaseModel):
     assignment_date: datetime
     due_date: Optional[datetime]
     total_time: float
+    billing_type: Literal["hourly", "percentage"]
+    note: Optional[str]
+    total_value: Optional[float]
+    area: Optional[str]
+
+class TimeEntryCreateByTime(BaseModel):
+    user_id: int
+    task_id: int
+    start_time: datetime
+    description: str
+    duration: float
 
 
 class TimeEntryCreate(BaseModel):
@@ -102,21 +120,27 @@ class ClientReportRequestTimeEntries(BaseModel):
     end_date: datetime
 
 
+
+class TaskReportRequest(BaseModel):
+    task_id: int
+
+
+
 class InvoiceByHoursRequest(BaseModel):
     client_id: int
-    currency: Literal["COP", "USD"]
-    exchange_rate: Optional[float] = None 
-    include_tax: bool = True 
+    task_id: int
+    currency: str  # 'COP' o 'USD'
+    exchange_rate: float | None = None
+    include_tax: bool = True
 
     
 class InvoiceByPercentageRequest(BaseModel):
     client_id: int
-    contract_id: int  
-    percentage: float  
-    payment_type: Literal["anticipo", "fracción", "final"]
-    currency: Literal["COP", "USD"]
-    exchange_rate: Optional[float] = None
-    include_tax: bool = True  
+    task_id: int
+    percentage: float
+    currency: str  # 'COP' o 'USD'
+    exchange_rate: float | None = None
+    payment_type: str  # anticipo, fracción, final
 
 class InvoiceFilterRequest(BaseModel):
     client_id: int
