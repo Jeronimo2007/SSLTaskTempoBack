@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 import os
 from dotenv import load_dotenv
 from app.services.utils import create_access_token,get_user_by_email  
+from app.database.data import supabase
 
 
 load_dotenv()
@@ -30,9 +31,9 @@ async def google_auth():
     url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
     return RedirectResponse(url)
 
+
 @router.get("/callback/google")
 async def google_callback(code: str):
-    
     token_url = "https://oauth2.googleapis.com/token"
     data = {
         "code": code,
@@ -49,7 +50,6 @@ async def google_callback(code: str):
     tokens = r.json()
     google_access_token = tokens["access_token"]
 
-  
     userinfo = requests.get(
         "https://www.googleapis.com/oauth2/v2/userinfo",
         headers={"Authorization": f"Bearer {google_access_token}"}
@@ -60,12 +60,14 @@ async def google_callback(code: str):
     user_data = userinfo.json()
     email = user_data["email"]
 
-    
     user = get_user_by_email(email)
     if not user:
         raise HTTPException(status_code=401, detail="Este usuario no está autorizado a iniciar sesión.")
 
-   
+    # ✅ Guardar el token en la base de datos
+    supabase.table("users").update({"google_access_token": google_access_token}).eq("id", user["id"]).execute()
+
+    # 🔐 Tu token personalizado para tu backend
     jwt_token = create_access_token(data={"sub": user["id"], "role": user["role"]})
 
     return {

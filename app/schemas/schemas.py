@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 
 class clientCreate(BaseModel):
@@ -150,14 +150,19 @@ class InvoiceFilterRequest(BaseModel):
 
 class EventCreate(BaseModel):
     title: str
+    description: Optional[str] = None
     event_date: date
+    start_time: time
+    end_time: time
     user_ids: List[int]
 
 class EventUpdate(BaseModel):
-    title: str
-    event_date: date
-    user_ids: List[int]
-
+    title: Optional[str] = None
+    description: Optional[str] = None
+    event_date: Optional[date] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    user_ids: Optional[List[int]] = None
 
 
 class ContractCreate(BaseModel):
