@@ -422,7 +422,6 @@ async def get_time_entries(data: ClientReportRequestTimeEntries, user: dict = De
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener los registros de tiempo: {str(e)}")
-    
 @router.post("/invoices/by-hours")
 def generate_invoice_by_hours(req: InvoiceByHoursRequest):
     try:
@@ -432,15 +431,22 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
             raise HTTPException(status_code=400, detail="Debe enviar exchange_rate si la moneda es USD")
 
         # Verificar tarea
-        task_resp = supabase.table("tasks").select("id, title").eq("id", req.task_id).single().execute()
+        task_resp = supabase.table("tasks").select("id, title, area").eq("id", req.task_id).single().execute()
         if not task_resp or not task_resp.data:
             raise HTTPException(status_code=404, detail="Tarea no encontrada")
+        task = task_resp.data
+
+        # Obtener cliente
+        client_resp = supabase.table("clients").select("*").eq("id", req.client_id).single().execute()
+        if not client_resp or not client_resp.data:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        client = client_resp.data
 
         # Obtener time entries no facturados para la tarea
         time_resp = supabase.table("time_entries")\
             .select("duration, user_id")\
             .eq("task_id", req.task_id)\
-            .eq("estado_facturacion", "no")\
+            .eq("facturado", "no")\
             .execute()
 
         if not time_resp or not time_resp.data:
@@ -449,34 +455,63 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
 
         # Obtener usuarios relacionados
         user_ids = list(set([e["user_id"] for e in entries]))
-        users_resp = supabase.table("users").select("id, cost").in_("id", user_ids).execute()
+        users_resp = supabase.table("users").select("id, username, cost, cost_per_hour_client").in_("id", user_ids).execute()
         if not users_resp or not users_resp.data:
             raise HTTPException(status_code=400, detail="No se encontraron usuarios relacionados")
         user_map = {u["id"]: u for u in users_resp.data}
 
-        # Calcular totales por usuario
+        # Calcular totales y detalles para PDF
         subtotal = 0
         total_hours = 0
+        tasks_details = []
         for e in entries:
             uid = e["user_id"]
             duration = round(e["duration"], 2)
-            rate = user_map[uid]["cost"]
+            rate = user_map[uid]["cost_per_hour_client"]
             total = duration * rate
 
             if req.currency == "USD":
+                rate = round(rate / req.exchange_rate, 2)
                 total = round(total / req.exchange_rate, 2)
 
             subtotal += total
             total_hours += duration
 
+            tasks_details.append({
+                "username": user_map[uid]["username"],
+                "area": task.get("area", "Sin área"),
+                "description": task["title"],
+                "duration": duration,
+                "rate": rate,
+                "total": total
+            })
+
         subtotal = round(subtotal, 2)
         tax = round(subtotal * 0.19, 2) if req.include_tax else 0
         total = round(subtotal + tax, 2)
 
-        # Registrar orden de servicio (invoice)
-        supabase.table("invoices").insert({
+        # Renderizar HTML para el PDF
+        template = env.get_template("invoice_template.html")
+        html_out = template.render(
+            client=client,
+            date=today.strftime("%Y-%m-%d"),
+            start_date=today.replace(day=1).date(),
+            end_date=today.date(),
+            tasks_details=tasks_details,
+            subtotal=subtotal,
+            tax=tax,
+            total=total,
+            currency_symbol="$" if req.currency == "COP" else "USD",
+            billing_type="hourly"
+        )
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
+            pdf_path = tmpfile.name
+        HTML(string=html_out, base_url=os.getcwd()).write_pdf(pdf_path)
+
+        # Registrar orden de servicio
+        invoice_data = {
             "client_id": req.client_id,
-            "task_id": req.task_id,
             "start_date": str(today.replace(day=1).date()),
             "end_date": str(today.date()),
             "issued_at": today.isoformat(),
@@ -488,24 +523,22 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
             "currency": req.currency,
             "exchange_rate": req.exchange_rate,
             "include_tax": req.include_tax
-        }).execute()
+        }
+        supabase.table("invoices").insert(invoice_data).execute()
 
         # Marcar time_entries como facturados
-        supabase.table("time_entries").update({"estado_facturacion": "si"}).eq("task_id", req.task_id).eq("estado_facturacion", "no").execute()
+        supabase.table("time_entries").update({"facturado": "si"}).eq("task_id", req.task_id).eq("facturado", "no").execute()
 
-        return {
-            "message": "Orden de servicio por horas registrada correctamente.",
-            "total_hours": total_hours,
-            "subtotal": subtotal,
-            "tax": tax,
-            "total": total
-        }
+        return FileResponse(
+            path=pdf_path,
+            filename=f"orden_servicio_{client['name'].replace(' ', '_')}_{today.strftime('%Y-%m-%d')}.pdf",
+            media_type="application/pdf"
+        )
 
     except HTTPException as e:
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
-
     
 
 @router.post("/invoices/by-percentage")
@@ -532,9 +565,8 @@ def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
         currency_symbol = "$" if req.currency == "COP" else "USD"
 
         # Registrar orden de servicio (invoice)
-        supabase.table("invoices").insert({
+        invoice_data = {
             "client_id": req.client_id,
-            "task_id": req.task_id,
             "start_date": str(now.replace(day=1).date()),
             "end_date": str(now.date()),
             "issued_at": now.isoformat(),
@@ -547,7 +579,8 @@ def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
             "total_case_value": total_case_value,
             "currency": req.currency,
             "exchange_rate": req.exchange_rate
-        }).execute()
+        }
+        supabase.table("invoices").insert(invoice_data).execute()
 
         # Actualizar progreso de facturación en la tarea
         new_percentage = round(task.get("percentage_billed", 0) + req.percentage, 2)
@@ -559,26 +592,53 @@ def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
         }
 
         if new_percentage >= 100:
-            supabase.table("time_entries").update({"estado_facturacion": "si"}).eq("task_id", req.task_id).execute()
+            supabase.table("time_entries").update({"facturado": "si"}).eq("task_id", req.task_id).execute()
         elif new_percentage > 0:
-            supabase.table("time_entries").update({"estado_facturacion": "parcialmente"}).eq("task_id", req.task_id).execute()
+            supabase.table("time_entries").update({"facturado": "parcialmente"}).eq("task_id", req.task_id).execute()
 
         supabase.table("tasks").update(update_fields).eq("id", req.task_id).execute()
 
-        return {
-            "message": "Orden de servicio por porcentaje registrada correctamente.",
-            "subtotal": subtotal,
-            "tax": tax,
-            "total": total,
-            "currency": currency_symbol,
-            "billed_percentage": new_percentage
+        # Obtener los datos del cliente para el PDF
+        client_resp = supabase.table("clients").select("name").eq("id", req.client_id).single().execute()
+        client_name = client_resp.data["name"]
+
+        # Obtener los detalles de la tarea
+        task_details = {
+            "username": "—",
+            "area": task["area"],
+            "description": task["title"],
+            "duration": "—",
+            "rate": "—",
+            "total": total
         }
+
+        # Preparar el HTML para el PDF
+        template = env.get_template("invoice_template.html")
+        html_out = template.render(
+            client=client_resp.data,
+            date=now.strftime("%Y-%m-%d"),
+            start_date=now.replace(day=1).date(),
+            end_date=now.date(),
+            tasks_details=[task_details],
+            subtotal=subtotal,
+            tax=tax,
+            total=total,
+            currency_symbol=currency_symbol,
+            billing_type="percentage",  # Solo porcentaje aquí
+            total_facturado=new_total,
+            restante=total_case_value - new_total
+        )
+
+        # Crear el PDF
+        pdf_path = "/tmp/invoice.pdf"
+        HTML(string=html_out).write_pdf(pdf_path)
+
+        return FileResponse(pdf_path, media_type="application/pdf", filename=f"invoice_{client_name}_{now.strftime('%Y-%m-%d')}.pdf")
 
     except HTTPException as e:
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
-    
 
 @router.get("/invoices/registry")
 def get_invoice_registry(

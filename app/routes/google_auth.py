@@ -64,18 +64,19 @@ async def google_callback(code: str):
     if not user:
         raise HTTPException(status_code=401, detail="Este usuario no está autorizado a iniciar sesión.")
 
-    # ✅ Guardar el token en la base de datos
+    
     supabase.table("users").update({"google_access_token": google_access_token}).eq("id", user["id"]).execute()
 
-    # 🔐 Tu token personalizado para tu backend
+   
     jwt_token = create_access_token(data={"sub": user["id"], "role": user["role"]})
 
-    return {
-        "access_token": jwt_token,
-        "token_type": "bearer",
-        "role": user["role"],
-        "user_id": user["id"],
-        "username": user["username"],
-        "email": user["email"],
-        "login_type": "google"
-    }
+    redirect_url = (
+        f"http://localhost:3000/lawspace"
+        f"?access_token={jwt_token}"
+        f"&user_id={user['id']}"
+        f"&username={user['username']}"
+        f"&email={user['email']}"
+    )
+
+    return RedirectResponse(url=redirect_url)
+    

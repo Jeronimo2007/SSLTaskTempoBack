@@ -83,7 +83,7 @@ async def get_task_endpoint(token: str = Depends(oauth2_scheme)):
     return get_tasks_by_user_id(user_data["id"])
 
 
-@router.put("/{task_id}")
+@router.put("/update/{task_id}")
 async def update_task_endpoint(task_data: TaskUpdate, user : dict = Depends(role_required(["socio", "senior", "consultor"])), token: str = Depends(oauth2_scheme)):
 
     """  update a tasks """
