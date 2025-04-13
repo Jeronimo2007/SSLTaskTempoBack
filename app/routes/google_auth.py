@@ -75,7 +75,7 @@ async def google_callback(code: str):
         f"?access_token={jwt_token}"
         f"&user_id={user['id']}"
         f"&username={user['username']}"
-        f"&email={user['email']}"
+        f"&role={user['role']}"  
     )
 
     return RedirectResponse(url=redirect_url)
