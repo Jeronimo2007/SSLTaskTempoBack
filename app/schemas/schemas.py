@@ -122,6 +122,8 @@ class ClientReportRequestTimeEntries(BaseModel):
 
 
 class TaskReportRequest(BaseModel):
+    start_date: datetime
+    end_date: datetime
     task_id: int
 
 

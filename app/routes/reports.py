@@ -284,6 +284,9 @@ async def download_task_report(
     """Download a detailed report of time entries for a specific task"""
 
     # Obtener la tarea
+    start_date = request.start_date.strftime("%Y-%m-%d")
+    end_date = request.end_date.strftime("%Y-%m-%d")
+    
     task_response = supabase.table("tasks") \
         .select("id, title, billing_type, percentage_billed") \
         .eq("id", request.task_id) \
@@ -301,6 +304,8 @@ async def download_task_report(
     # Obtener time entries relacionados
     entries_response = supabase.table("time_entries") \
         .select("description, start_time, duration, facturado") \
+        .gte("start_time", start_date) \
+        .lte("end_time", end_date) \
         .eq("task_id", request.task_id) \
         .execute()
 
@@ -325,7 +330,7 @@ async def download_task_report(
             "Descripción": entry.get("description", ""),
             "Fecha": entry.get("start_time", "")[:10],
             "Duración (h)": round(entry.get("duration", 0), 2),
-            "Estado de Facturación": estado
+            "Facturado": estado
         })
 
     df = pd.DataFrame(excel_data)

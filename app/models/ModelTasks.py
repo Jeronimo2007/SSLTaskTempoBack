@@ -78,7 +78,7 @@ def get_all_tasks(user_id: int = None):
     else:
         # Get all tasks from active clients
         response = supabase.table("tasks").select(
-            "id, title, status, due_date, client_id, clients!inner(name, active), area"
+            "id, title, status, due_date, note, client_id, clients!inner(name, active), area"
         ).eq('clients.active', True).execute()
 
     if not response.data:
@@ -127,7 +127,8 @@ def update_task(task_data: TaskUpdate):
             raise HTTPException(status_code=400, detail="Formato de fecha inválido. Usa ISO 8601 (YYYY-MM-DDTHH:MM:SS).")
 
    
-    task_dict["due_date"] = format_datetime(task_dict["due_date"])
+    if "due_date" in task_dict:
+        task_dict["due_date"] = format_datetime(task_dict["due_date"])
 
     response = supabase.table("tasks").update(task_dict).eq("id", task_id).execute()
 
