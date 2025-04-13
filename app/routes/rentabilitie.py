@@ -168,6 +168,9 @@ def get_client_contributions():
       ]
     """
     try:
+        today = datetime.now()
+        start_of_week = today - timedelta(days=today.weekday())  # Lunes
+        end_of_week = start_of_week + timedelta(days=6)        
         # Obtener tareas y sus clientes
         tasks_resp = supabase.table("tasks").select("id, client_id").execute()
         task_map = {}
@@ -189,6 +192,8 @@ def get_client_contributions():
         # Obtener time_entries
         entries_resp = supabase.table("time_entries")\
             .select("user_id, duration, task_id")\
+            .gte("start_time", str(start_of_week.date()))\
+            .lte("start_time", str(end_of_week.date()))\
             .execute()
         entries = entries_resp.data
 
