@@ -6,10 +6,7 @@ from ..database.data import supabase
 
 router = APIRouter(prefix="/rentability", tags=["Rentabilidad"])
 
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
-
-
 
 @router.get("/lawyers/profitability")
 def get_lawyers_profitability():
@@ -18,8 +15,8 @@ def get_lawyers_profitability():
         start_of_month = today.replace(day=1).date()
         end_of_month = (today.replace(day=1) + relativedelta(months=1, days=-1)).date()
 
-        users_resp = supabase.table("users").select("id, username, salary, cost, cost_per_hour_client").execute()
-        users = users_resp.data
+        users_resp = supabase.table("users").select("id, username, salary, cost, cost_per_hour_client, desvinculado").execute()
+        users = [u for u in users_resp.data if not u.get("desvinculado", False)]
 
         time_resp = supabase.table("time_entries")\
             .select("user_id, duration")\
@@ -56,8 +53,6 @@ def get_lawyers_profitability():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
-
-
 @router.get("/lawyers/cost-vs-hours")
 def get_lawyer_cost_vs_hours():
     try:
@@ -65,8 +60,8 @@ def get_lawyer_cost_vs_hours():
         start_of_month = today.replace(day=1).date()
         end_of_month = (today.replace(day=1) + relativedelta(months=1, days=-1)).date()
 
-        users_resp = supabase.table("users").select("id, username, salary, cost, cost_per_hour_client").execute()
-        users = users_resp.data
+        users_resp = supabase.table("users").select("id, username, salary, cost, cost_per_hour_client, desvinculado").execute()
+        users = [u for u in users_resp.data if not u.get("desvinculado", False)]
 
         time_resp = supabase.table("time_entries")\
             .select("user_id, duration")\
@@ -105,72 +100,76 @@ def get_lawyer_cost_vs_hours():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
-
 @router.get("/lawyers/weekly-workload")
 def get_lawyers_weekly_workload():
-    """
-    Devuelve:
-    - username
-    - horas trabajadas en la semana actual
-    - horas contratadas semanalmente (weekly_hours)
-    """
     try:
         today = datetime.now()
+        # Weekly period
         start_of_week = today - timedelta(days=today.weekday())  # Lunes
         end_of_week = start_of_week + timedelta(days=6)          # Domingo
+        # Monthly period
+        start_of_month = today.replace(day=1).date()
+        end_of_month = (today.replace(day=1) + relativedelta(months=1, days=-1)).date()
 
-        users_resp = supabase.table("users").select("id, username, weekly_hours").execute()
-        users = users_resp.data
+        users_resp = supabase.table("users").select("id, username, weekly_hours, desvinculado").execute()
+        users = [u for u in users_resp.data if not u.get("desvinculado", False)]
 
-        time_resp = supabase.table("time_entries")\
+        # Get weekly entries
+        weekly_time_resp = supabase.table("time_entries")\
             .select("user_id, duration, start_time")\
             .gte("start_time", str(start_of_week.date()))\
             .lte("start_time", str(end_of_week.date()))\
             .execute()
-        entries = time_resp.data
+        weekly_entries = weekly_time_resp.data
 
-        hours_by_user = {}
-        for e in entries:
+        # Get monthly entries
+        monthly_time_resp = supabase.table("time_entries")\
+            .select("user_id, duration, start_time")\
+            .gte("start_time", str(start_of_month))\
+            .lte("start_time", str(end_of_month))\
+            .execute()
+        monthly_entries = monthly_time_resp.data
+
+        # Calculate weekly hours
+        weekly_hours_by_user = {}
+        for e in weekly_entries:
             uid = e["user_id"]
-            hours_by_user[uid] = hours_by_user.get(uid, 0) + e["duration"]
+            weekly_hours_by_user[uid] = weekly_hours_by_user.get(uid, 0) + e["duration"]
+
+        # Calculate monthly hours
+        monthly_hours_by_user = {}
+        for e in monthly_entries:
+            uid = e["user_id"]
+            monthly_hours_by_user[uid] = monthly_hours_by_user.get(uid, 0) + e["duration"]
 
         results = []
         for u in users:
             uid = u["id"]
-            worked = round(hours_by_user.get(uid, 0), 2)
+            weekly_worked = round(weekly_hours_by_user.get(uid, 0), 2)
+            monthly_worked = round(monthly_hours_by_user.get(uid, 0), 2)
+            weekly_hours = u.get("weekly_hours", 0) or 0
+            monthly_expected = round(weekly_hours * 4.33, 2)
+            
             results.append({
                 "username": u["username"],
-                "worked_hours_this_week": worked,
-                "weekly_hours_expected": round(u.get("weekly_hours", 0) or 0, 2)
+                "worked_hours_this_week": weekly_worked,
+                "weekly_hours_expected": round(weekly_hours, 2),
+                "worked_hours_this_month": monthly_worked,
+                "monthly_hours_expected": monthly_expected
             })
 
         return results
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-    
-
 
 @router.get("/clients/contributions")
 def get_client_contributions():
-    """
-    Devuelve:
-    - client_id
-    - client_name
-    - total_hours (de todas sus tareas)
-    - contributions: [
-        {
-          user_id,
-          username,
-          worked_hours,
-          porcentaje_contribucion
-        }
-      ]
-    """
     try:
         today = datetime.now()
         start_of_week = today - timedelta(days=today.weekday())  # Lunes
-        end_of_week = start_of_week + timedelta(days=6)        
+        end_of_week = start_of_week + timedelta(days=6)
+        
         # Obtener tareas y sus clientes
         tasks_resp = supabase.table("tasks").select("id, client_id").execute()
         task_map = {}
@@ -186,8 +185,8 @@ def get_client_contributions():
         clients = {c["id"]: c["name"] for c in clients_resp.data}
 
         # Obtener usuarios
-        users_resp = supabase.table("users").select("id, username").execute()
-        users = {u["id"]: u["username"] for u in users_resp.data}
+        users_resp = supabase.table("users").select("id, username, desvinculado").execute()
+        users = {u["id"]: u["username"] for u in users_resp.data if not u.get("desvinculado", False)}
 
         # Obtener time_entries
         entries_resp = supabase.table("time_entries")\
@@ -205,7 +204,7 @@ def get_client_contributions():
             uid = e["user_id"]
             dur = e["duration"]
             cid = task_map.get(tid)
-            if cid:
+            if cid and uid in users:  # Only include active users
                 total_client_hours[cid] = total_client_hours.get(cid, 0) + dur
                 client_user_hours.setdefault(cid, {})
                 client_user_hours[cid][uid] = client_user_hours[cid].get(uid, 0) + dur
@@ -236,24 +235,16 @@ def get_client_contributions():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
-
 @router.get("/office/summary")
 def get_office_summary():
-    """
-    Devuelve:
-    - total_salarios
-    - total_ingresos (usando cost_per_hour_client)
-    - total_horas_trabajadas
-    - rentabilidad_oficina = ingresos - salarios
-    """
     try:
         today = datetime.now()
         start_of_month = today.replace(day=1).date()
         end_of_month = (today.replace(day=1) + relativedelta(months=1, days=-1)).date()
 
         # Obtener usuarios
-        users_resp = supabase.table("users").select("id, username, salary, cost_per_hour_client").execute()
-        users = {u["id"]: u for u in users_resp.data}
+        users_resp = supabase.table("users").select("id, username, salary, cost_per_hour_client, desvinculado").execute()
+        users = {u["id"]: u for u in users_resp.data if not u.get("desvinculado", False)}
 
         # Obtener time entries del mes actual
         time_resp = supabase.table("time_entries")\
@@ -272,10 +263,11 @@ def get_office_summary():
 
         for e in entries:
             uid = e["user_id"]
-            dur = e["duration"]
-            rate = users.get(uid, {}).get("cost_per_hour_client", 0)
-            total_horas += dur
-            total_ingresos += dur * rate
+            if uid in users:  # Only include active users
+                dur = e["duration"]
+                rate = users.get(uid, {}).get("cost_per_hour_client", 0)
+                total_horas += dur
+                total_ingresos += dur * rate
 
         rentabilidad = round(total_ingresos - total_salarios, 2)
 

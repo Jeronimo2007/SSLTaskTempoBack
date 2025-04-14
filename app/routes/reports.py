@@ -208,7 +208,7 @@ async def download_client_report(
 
     # Obtener tareas con las nuevas columnas
     task_response = supabase.table("tasks") \
-        .select("id, client_id, title, assignment_date, due_date, area") \
+        .select("id, client_id, title, assignment_date, billing_type ,due_date, area") \
         .eq("client_id", request.client_id) \
         .execute()
     task_dict = {task["id"]: task for task in task_response.data}
@@ -216,9 +216,14 @@ async def download_client_report(
     # Preparar datos para el archivo Excel
     excel_data = []
     for task_id, task_info in task_dict.items():
+        # Traducir el tipo de facturación a español
+        billing_type = task_info['billing_type']
+        billing_type_spanish = "Por Hora" if billing_type == "hourly" else "Por porcentaje"
+        
         excel_data.append({
             "Cliente": client_name,
-            "Tarea": task_info["title"],
+            "Asunto": task_info["title"],
+            "Facturacion": billing_type_spanish,
             "Fecha de Asignación": task_info.get("assignment_date", "").split("T")[0],
             "Fecha de Vencimiento": task_info.get("due_date", "").split("T")[0],
             "Área": task_info.get("area", "")
