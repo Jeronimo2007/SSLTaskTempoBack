@@ -3,8 +3,8 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
-from app.models.ModelTimeEntry import create_time_entry, delete_time_entry, get_all_time_entries, get_time_entry, update_time_entry
-from app.schemas.schemas import TimeEntryCreate, TimeEntryResponse, TimeEntryUpdate, getEntries
+from app.models.ModelTimeEntry import create_time_entry, create_time_entry_by_time, delete_time_entry, get_all_time_entries, get_time_entry, update_time_entry
+from app.schemas.schemas import TimeEntryCreate, TimeEntryCreateByTime, TimeEntryResponse, TimeEntryUpdate, getEntries
 from app.services.utils import get_current_user
 
 
@@ -12,6 +12,18 @@ router = APIRouter(prefix="/timeEntry", tags=["Time Entries"])
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
+
+@router.post("/create_by_time")
+async def create_timeEntry_by_time(req: TimeEntryCreateByTime):
+    """ create a time entry by time """
+
+    entry = create_time_entry_by_time(req)
+
+    if "error" in entry:
+
+        raise HTTPException(status_code=400, detail=entry["error"])
+    
+    return entry
 
 
 @router.post("/create", response_model=TimeEntryResponse)

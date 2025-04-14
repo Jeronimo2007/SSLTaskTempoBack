@@ -688,6 +688,100 @@ def get_invoice_registry(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
+@router.get("/invoices/registry/excel")
+async def get_invoice_registry_excel(
+    start_date: str = Query(..., description="Fecha inicial en formato YYYY-MM-DD"),
+    end_date: str = Query(..., description="Fecha final en formato YYYY-MM-DD")
+):
+    try:
+        # Obtener facturas en el rango
+        response = supabase.table("invoices")\
+            .select("issued_at, billing_type, subtotal, currency")\
+            .gte("issued_at", start_date)\
+            .lte("issued_at", end_date)\
+            .order("issued_at", desc=True)\
+            .execute()
+
+        if not response.data:
+            raise HTTPException(status_code=404, detail="No hay facturas en el rango de fechas seleccionado")
+
+        # Preparar datos para Excel
+        excel_data = []
+        for invoice in response.data:
+            billing_type = "Por Hora" if invoice["billing_type"] == "hourly" else "Por porcentaje"
+            currency = "COP" if invoice["currency"] == "COP" else "USD"
+            
+            excel_data.append({
+                "Fecha de Emisión": invoice["issued_at"].split("T")[0],
+                "Tipo de Facturación": billing_type,
+                "Subtotal": invoice["subtotal"],
+                "Moneda": currency
+            })
+
+        # Crear archivo Excel
+        df = pd.DataFrame(excel_data)
+        output = io.BytesIO()
+
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, sheet_name="Registro de Facturas", index=False, startrow=1)
+            workbook = writer.book
+            worksheet = writer.sheets["Registro de Facturas"]
+
+            # Formato para encabezados
+            header_format = workbook.add_format({
+                'bold': True,
+                'text_wrap': True,
+                'valign': 'vcenter',
+                'align': 'center',
+                'fg_color': '#D7E4BC',
+                'border': 1
+            })
+
+            # Formato para celdas
+            cell_format = workbook.add_format({
+                'border': 1,
+                'align': 'center',
+                'valign': 'vcenter'
+            })
+
+            # Aplicar formatos y ajustar columnas
+            for col_num, value in enumerate(df.columns.values):
+                worksheet.write(1, col_num, value, header_format)
+                worksheet.set_column(col_num, col_num, 20)
+
+            # Ajustar el ancho de las columnas específicas
+            worksheet.set_column('A:A', 15)  # Fecha de Emisión
+            worksheet.set_column('B:B', 20)  # Tipo de Facturación
+            worksheet.set_column('C:C', 15)  # Subtotal
+            worksheet.set_column('D:D', 10)  # Moneda
+
+            # Título del reporte
+            title_format = workbook.add_format({
+                'bold': True,
+                'font_size': 14,
+                'align': 'center',
+                'valign': 'vcenter'
+            })
+            worksheet.merge_range('A1:D1', 'Registro de Facturas', title_format)
+
+            # Aplicar formato a las celdas de datos
+            for row in range(len(df)):
+                for col in range(len(df.columns)):
+                    value = df.iloc[row, col]
+                    worksheet.write(row + 2, col, value, cell_format)
+
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=registro_facturas_{start_date}_{end_date}.xlsx"}
+        )
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
 
 
 
