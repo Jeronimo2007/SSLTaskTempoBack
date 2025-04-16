@@ -71,7 +71,7 @@ async def google_callback(code: str):
     jwt_token = create_access_token(data={"sub": user["id"], "role": user["role"]})
 
     redirect_url = (
-        f"https://ssl-task-tempo.vercel.app/lawspace"
+        f"https://ssl.tasktempos.com/lawspace"
         f"?access_token={jwt_token}"
         f"&user_id={user['id']}"
         f"&username={user['username']}"
