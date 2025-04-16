@@ -1,6 +1,5 @@
-
 from app.database.data import supabase
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.schemas.schemas import TimeEntryCreate, TimeEntryCreateByTime, TimeEntryUpdate, getEntries
 
 
@@ -30,32 +29,31 @@ def create_time_entry_by_time(data:TimeEntryCreateByTime):
 
 
 def create_time_entry(user_id: int, entry_data: TimeEntryCreate):
-
     """ create a new time entry in supabase """
+    
+    # Ensure both datetimes are timezone-aware
+    if entry_data.start_time.tzinfo is None:
+        entry_data.start_time = entry_data.start_time.replace(tzinfo=timezone.utc)
+    if entry_data.end_time.tzinfo is None:
+        entry_data.end_time = entry_data.end_time.replace(tzinfo=timezone.utc)
 
     if entry_data.start_time >= entry_data.end_time:
-
         return {"error": "La hora de inicio debe ser menor a la hora de finalización."}
 
     duration = calculate_duration(entry_data.start_time, entry_data.end_time)
 
     response = supabase.table("time_entries").insert({
-        
         "task_id": entry_data.task_id,
         "user_id": user_id,
         "duration": duration,
         "start_time": entry_data.start_time.isoformat(),
         "end_time": entry_data.end_time.isoformat(),
         "description": entry_data.description
-
     }).execute()
 
     if response.data:
-
         return response.data[0]
-    
     else:
-
         return {"error": response.error}
     
 

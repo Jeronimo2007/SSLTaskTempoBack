@@ -14,7 +14,24 @@ router = APIRouter(prefix="/auth", tags=["Google Auth"])
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
+REDIRECT_URI_LOCAL = os.getenv("GOOGLE_REDIRECT_URI")
+REDIRECT_URI_PROD = os.getenv("GOOGLE_REDIRECT_URI_PROD")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "production") # Default to production if not set
+
+if ENVIRONMENT == "local":
+    REDIRECT_URI = REDIRECT_URI_LOCAL
+else:
+    REDIRECT_URI = REDIRECT_URI_PROD
+
+FRONTEND_URL_LOCAL = os.getenv("FRONTEND_URL")
+FRONTEND_URL_PROD = os.getenv("FRONTEND_URL_PROD")
+
+# Select the appropriate frontend URL based on the environment
+if ENVIRONMENT == "local":
+    FINAL_FRONTEND_URL = FRONTEND_URL_LOCAL
+else:
+    FINAL_FRONTEND_URL = FRONTEND_URL_PROD
+
 
 SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email"
 
@@ -71,7 +88,7 @@ async def google_callback(code: str):
     jwt_token = create_access_token(data={"sub": user["id"], "role": user["role"]})
 
     redirect_url = (
-        f"https://ssl.tasktempos.com/lawspace"
+        f"{FINAL_FRONTEND_URL}/lawspace" # Use the environment-specific frontend URL
         f"?access_token={jwt_token}"
         f"&user_id={user['id']}"
         f"&username={user['username']}"

@@ -28,10 +28,12 @@ async def create_timeEntry_by_time(req: TimeEntryCreateByTime):
 
 @router.post("/create", response_model=TimeEntryResponse)
 async def create_time_entry_endpoint(entry_data: TimeEntryCreate, user: dict = Depends(get_current_user)):
+    
 
     """ register the time in a task """
 
     entry = create_time_entry(user["id"], entry_data)
+   
 
     if "error" in entry:
 

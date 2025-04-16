@@ -71,14 +71,14 @@ def get_all_tasks(user_id: int = None):
 
             # Filter tasks based on the retrieved client IDs and active clients
             response = supabase.table("tasks").select(
-                "id, title, status, due_date, client_id, clients!inner(name, active), area"
+                "id, title, status, due_date, client_id, clients!inner(name, active), area, total_billed, total_value, billing_type, note"
             ).in_('client_id', client_ids).eq('clients.active', True).execute()
         else:
             return []
     else:
         # Get all tasks from active clients
         response = supabase.table("tasks").select(
-            "id, title, status, due_date, note, client_id, clients!inner(name, active), area"
+            "id, title, status, due_date, note, client_id, clients!inner(name, active), area, total_billed,total_value,billing_type"
         ).eq('clients.active', True).execute()
 
     if not response.data:
@@ -94,10 +94,13 @@ def get_all_tasks(user_id: int = None):
             "area": task.get("area"),
             "billing_type": task.get("billing_type"),
             "note": task.get("note"),
-            "total_value": task.get("total_value")
+            "total_value": task.get("total_value"),
+            "total_billed": task.get("total_billed")
         }
         for task in response.data
     ]
+
+    
 
     return tasks
 
@@ -139,23 +142,21 @@ def update_task(task_data: TaskUpdate):
     
 
 def delete_task(task_id: int):
-
     """ remove a tasks """
-
-    response_time_entries = supabase.table("time_entries").delete().eq("task_id", task_id).execute()
-
-    if not response_time_entries.data:
-        return {"error": response_time_entries.error}
-
-    response = supabase.table("tasks").delete().eq("id", task_id).execute()
-
-    if response.data:
-
-        return {"message": "Tarea eliminada correctamente"}
-    
-    else:
-
-        return {"error": response.error}
+    try:
+        # Delete time entries first
+        response_time_entries = supabase.table("time_entries").delete().eq("task_id", task_id).execute()
+        
+        # Delete the task
+        response = supabase.table("tasks").delete().eq("id", task_id).execute()
+        
+        if hasattr(response, 'error') and response.error:
+            return {"error": f"No se pudo eliminar la tarea: {response.error}"}
+        else:
+            return {"message": "Tarea eliminada correctamente"}
+            
+    except Exception as e:
+        return {"error": f"Error al eliminar la tarea: {str(e)}"}
     
 
 

@@ -500,6 +500,33 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
         tax = round(subtotal * 0.19, 2) if req.include_tax else 0
         total = round(subtotal + tax, 2)
 
+        # Registrar orden de servicio
+        invoice_data = {
+            "client_id": req.client_id,
+            "start_date": str(today.replace(day=1).date()),
+            "end_date": str(today.date()),
+            "issued_at": today.isoformat(),
+            "billing_type": "hourly",
+            "total_hours": total_hours,
+            "subtotal": subtotal,
+            "tax": tax,
+            "total": total,
+            "currency": req.currency,
+            "exchange_rate": req.exchange_rate,
+            "include_tax": req.include_tax
+        }
+        supabase.table("invoices").insert(invoice_data).execute()
+
+        # Actualizar total facturado en la tarea
+        new_total = round(task.get("total_billed", 0) + total, 2)
+        update_fields = {
+            "total_billed": new_total
+        }
+        supabase.table("tasks").update(update_fields).eq("id", req.task_id).execute()
+
+        # Marcar time_entries como facturados
+        supabase.table("time_entries").update({"facturado": "si"}).eq("task_id", req.task_id).eq("facturado", "no").execute()
+
         # Renderizar HTML para el PDF
         template = env.get_template("invoice_template.html")
         html_out = template.render(
@@ -518,26 +545,6 @@ def generate_invoice_by_hours(req: InvoiceByHoursRequest):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
             pdf_path = tmpfile.name
         HTML(string=html_out, base_url=os.getcwd()).write_pdf(pdf_path)
-
-        # Registrar orden de servicio
-        invoice_data = {
-            "client_id": req.client_id,
-            "start_date": str(today.replace(day=1).date()),
-            "end_date": str(today.date()),
-            "issued_at": today.isoformat(),
-            "billing_type": "hourly",
-            "total_hours": total_hours,
-            "subtotal": subtotal,
-            "tax": tax,
-            "total": total,
-            "currency": req.currency,
-            "exchange_rate": req.exchange_rate,
-            "include_tax": req.include_tax
-        }
-        supabase.table("invoices").insert(invoice_data).execute()
-
-        # Marcar time_entries como facturados
-        supabase.table("time_entries").update({"facturado": "si"}).eq("task_id", req.task_id).eq("facturado", "no").execute()
 
         return FileResponse(
             path=pdf_path,

@@ -243,8 +243,8 @@ def update_client(data: clientUpdate):
 
 def remove_client(id: int):
     try:
-        
-        response_client = supabase.table('clients').delete().eq('id', id).execute()
+        # Set client's active status to False
+        response_client = supabase.table('clients').update({'active': False}).eq('id', id).execute()
 
         if response_client:
            
@@ -256,12 +256,12 @@ def remove_client(id: int):
                     delete_task(task['id'])
 
             return {
-                'message': 'Cliente y tareas eliminados correctamente'
+                'message': 'Cliente desactivado y tareas eliminadas correctamente'
             }
 
     except Exception as e:
         return {
-            'error': 'Error al eliminar el cliente',
+            'error': 'Error al desactivar el cliente',
             'details': str(e)
         }
 
