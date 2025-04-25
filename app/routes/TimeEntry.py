@@ -64,12 +64,13 @@ async def get_time_entry_endpoint(entry_id: int):
     return entry
 
 
-@router.put("/update/{entry_id}", response_model=TimeEntryResponse)
-async def update_time_entry_endpoint(entry_id: int, entry_data: TimeEntryUpdate):
+@router.put("/update")
+async def update_time_entry_endpoint(entry_data: TimeEntryUpdate):
+    print("entry_data:", entry_data)
 
     """ update a time entry"""
 
-    entry = update_time_entry(entry_id, entry_data)
+    entry = update_time_entry(entry_data)
 
     if "error" in entry:
 

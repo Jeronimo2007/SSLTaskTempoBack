@@ -16,9 +16,19 @@ def format_datetime(dt: Optional[datetime]) -> Optional[str]:
 def create_task(task_data: TaskCreate):
 
     """ creates a new task in the database """
+    print("task_data:", task_data)
 
     task_dict = task_data.dict()
+    
+    if isinstance(task_dict.get("due_date"), str):
+        try:
+            task_dict["due_date"] = datetime.fromisoformat(task_dict["due_date"])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha inválido. Usa ISO 8601 (YYYY-MM-DDTHH:MM:SS).")
 
+    if "due_date" in task_dict:
+        task_dict["due_date"] = format_datetime(task_dict["due_date"])
+    
     response = supabase.table("tasks").insert(task_dict).execute()
 
     if response.data:

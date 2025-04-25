@@ -74,21 +74,25 @@ def get_time_entry(entry_id: int):
 
     return response.data[0] if response.data else None
 
-def update_time_entry(entry_id: int, entry_data: TimeEntryUpdate):
+def update_time_entry(entry_data: TimeEntryUpdate):
+    print("update_time_entry function called")
+    """
+    Update a time entry.
+    Supports updating start_time, end_time, and description fields.
+    Only fields provided in entry_data will be updated.
+    """
 
-    """ update a time entry """
-
+    print("Raw entry_data:", entry_data)
+    print("entry_data dict:", entry_data.dict())
+    # Build update_data dict only with fields that are set
     update_data = entry_data.dict(exclude_unset=True)
-    
-    if "start_time" in update_data and "end_time" in update_data:
+    print("update_data to be sent to DB:", update_data)
 
-        if update_data["start_time"] >= update_data["end_time"]:
+    # Build update_data dict only with fields that are set
+    update_data = entry_data.dict(exclude_unset=True)
+    print("update_data to be sent to DB:", update_data)
 
-            return {"error": "La hora de inicio debe ser menor a la hora de finalización."}
-        
-        update_data["duration"] = calculate_duration(update_data["start_time"], update_data["end_time"])
-
-    response = supabase.table("time_entries").update(update_data).eq("id", entry_id).execute()
+    response = supabase.table("time_entries").update({"description": update_data["description"]}).eq("id", entry_data.id).execute()
 
     return response.data[0] if response.data else {"error": response.error}
 

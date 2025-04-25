@@ -130,8 +130,8 @@ async def download_report(
                 "Total Horas": total_hours if idx == 0 else "",
                 "Tarea": task.get("Título", ""),
                 "Horas por Tarea": task.get("Horas", ""),
-                "Fecha de Asignación": task_info.get("assignment_date", "").split("T")[0] if task_info else "",
-                "Fecha de Vencimiento": task_info.get("due_date", "").split("T")[0] if task_info else "",
+                "Fecha de Asignación": task_info.get("assignment_date", "")[:10] if task_info and task_info.get("assignment_date") else "",
+                "Fecha de Vencimiento": task_info.get("due_date", "")[:10] if task_info and task_info.get("due_date") else "",
                 "Área": task_info.get("area", "") if task_info else ""
             })
 
@@ -224,8 +224,8 @@ async def download_client_report(
             "Cliente": client_name,
             "Asunto": task_info["title"],
             "Facturacion": billing_type_spanish,
-            "Fecha de Asignación": task_info.get("assignment_date", "").split("T")[0],
-            "Fecha de Vencimiento": task_info.get("due_date", "").split("T")[0],
+            "Fecha de Asignación": task_info.get("assignment_date", "")[:10] if task_info and task_info.get("assignment_date") else "",
+            "Fecha de Vencimiento": task_info.get("due_date", "")[:10] if task_info and task_info.get("due_date") else "",
             "Área": task_info.get("area", "")
         })
 

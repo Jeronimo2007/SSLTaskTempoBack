@@ -128,12 +128,13 @@ def get_client_summary():
     """Get the summary of the clients"""
     try:
         # Realiza la consulta a la tabla "client_monthly_summary"
-        response = supabase.table("client_monthly_summary").select("*").execute()
-
-        # Verifica si hay un error en la respuesta
-        if not response or "error" in response:
-            error_message = response.get("error", {}).get("message", "Error desconocido")
-            raise HTTPException(status_code=500, detail=f"Error al obtener el resumen de clientes: {error_message}")
+        try:
+            active_clients = supabase.table("clients").select("name").filter("active", "eq", True).execute()
+            active_client_ids = [client["name"] for client in active_clients.data]
+            response = supabase.table("task_permanent_summary").select("*").in_("client", active_client_ids).execute()
+        except Exception as e:
+            print(f"Error during query execution: {e}")
+            raise HTTPException(status_code=500, detail=f"Error al obtener el resumen de clientes: {str(e)}")
 
         # Verifica si los datos están vacíos
         if not response.data:

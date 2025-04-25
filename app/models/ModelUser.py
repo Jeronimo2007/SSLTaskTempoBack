@@ -13,13 +13,12 @@ ROLE_CODES = {
 
 def create_user(username: str, password: str, role_code: str):
     """ Creates an user with a role """
-    hashed_password = hash_password(password)
 
     
     response = supabase.table("users").insert({
         "username": username,
-        "hashed_password": hashed_password,
-        "role": role_code  
+        "password": password if password else "default_password",
+        "role": role_code
     }).execute()
 
     print("Response:", response)
@@ -31,9 +30,9 @@ def create_user(username: str, password: str, role_code: str):
 
 def get_user(email: str):
     """ Get all the data of a user by email, excluding those marked as 'desvinculado' """
-    response = supabase.table("users").select("id,username,hashed_password,role,desvinculado,email").eq("email", email).neq("desvinculado", True).execute()
+    response = supabase.table("users").select("id,username,password,role,desvinculado,email").eq("email", email).neq("desvinculado", True).execute()
     if response.data:
-        return response.data[0]  
+        return response.data[0]
     else:
         return None
 

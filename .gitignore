@@ -33,3 +33,4 @@ docker-compose.override.yml
 supabase/
 
 .qodoapp/.env
+.qodo

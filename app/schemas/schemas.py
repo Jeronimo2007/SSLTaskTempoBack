@@ -43,7 +43,8 @@ class TaskCreate(BaseModel):
     area: Optional[str] = "Sin área"
     note: Optional[str] = None
     total_value: Optional[float] = Field(default=None, description="Requerido si billing_type es 'percentage'")
-
+    due_date: Optional[datetime] = None
+    permanent: bool = False
 
 class TaskUpdate(BaseModel):
     id: int
@@ -86,8 +87,8 @@ class TimeEntryCreate(BaseModel):
 
 
 class TimeEntryUpdate(BaseModel):
-    start_time: Optional[datetime] 
-    end_time: Optional[datetime] 
+    id: int
+    description: Optional[str] = None
 
 
 class TimeEntryResponse(BaseModel):

@@ -33,7 +33,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """Verify credentials and returns the acces token"""
 
     user = get_user(form_data.username)  # OAuth2PasswordRequestForm uses username field for email
-    if not user or not verify_password(form_data.password, user["hashed_password"]):
+    if not user or not verify_password(form_data.password, user["password"]):
         raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
 
     access_token = create_access_token(

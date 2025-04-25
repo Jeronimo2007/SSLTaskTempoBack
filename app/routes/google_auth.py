@@ -16,21 +16,16 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI_LOCAL = os.getenv("GOOGLE_REDIRECT_URI")
 REDIRECT_URI_PROD = os.getenv("GOOGLE_REDIRECT_URI_PROD")
-ENVIRONMENT = os.getenv("ENVIRONMENT", "production") # Default to production if not set
+ENVIRONMENT = os.getenv("ENVIRONMENT", "production") 
 
-if ENVIRONMENT == "local":
-    REDIRECT_URI = REDIRECT_URI_LOCAL
-else:
-    REDIRECT_URI = REDIRECT_URI_PROD
+
+REDIRECT_URI = REDIRECT_URI_PROD
 
 FRONTEND_URL_LOCAL = os.getenv("FRONTEND_URL")
 FRONTEND_URL_PROD = os.getenv("FRONTEND_URL_PROD")
 
-# Select the appropriate frontend URL based on the environment
-if ENVIRONMENT == "local":
-    FINAL_FRONTEND_URL = FRONTEND_URL_LOCAL
-else:
-    FINAL_FRONTEND_URL = FRONTEND_URL_PROD
+ 
+FINAL_FRONTEND_URL = FRONTEND_URL_PROD
 
 
 SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email"

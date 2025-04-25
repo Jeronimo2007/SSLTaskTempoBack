@@ -43,16 +43,16 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
 def hash_password(password: str) -> str:
     """
-    Hashea una contraseña utilizando pbkdf2_sha256.
+    Return the password without hashing.
     """
-    return pwd_context.hash(password)
+    return password
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+def verify_password(plain_password: str, stored_password: str) -> bool:
     """
-    Verifica si una contraseña sin procesar coincide con su hash.
+    Verifies if a plain password matches the stored password.
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    return plain_password == stored_password
 
 def create_access_token(data: dict) -> str:
     """Genera un JWT sin tiempo de expiración."""
