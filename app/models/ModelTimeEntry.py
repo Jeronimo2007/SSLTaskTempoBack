@@ -1,5 +1,6 @@
 from app.database.data import supabase
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from app.schemas.schemas import TimeEntryCreate, TimeEntryCreateByTime, TimeEntryUpdate, getEntries
 
 
@@ -11,17 +12,26 @@ def calculate_duration(start_time: datetime, end_time: datetime) -> float:
 
 
 def create_time_entry_by_time(data:TimeEntryCreateByTime):
-    """create a time entry by time"""
+    """create a time entry by time, ensuring Bogotá time zone"""
 
-    end_time = data.start_time + timedelta(hours=data.duration)
+    bogota_tz = ZoneInfo("America/Bogota")
+    
+    # Ensure start_time is in Bogotá timezone
+    if data.start_time.tzinfo is None:
+        # Assume naive datetimes are in Bogotá time
+        start_time = data.start_time.replace(tzinfo=bogota_tz)
+    else:
+        # Convert to Bogotá time if not already
+        start_time = data.start_time.astimezone(bogota_tz)
+    
+    end_time = start_time + timedelta(hours=data.duration)
 
     response = supabase.table("time_entries").insert({
         "task_id": data.task_id,
         "user_id": data.user_id,
-        "start_time": data.start_time.isoformat(),
+        "start_time": start_time.isoformat(),
         "end_time": end_time.isoformat(),
         "description": data.description
-
     }).execute()
 
     if response.data: return response.data[0]
@@ -29,13 +39,22 @@ def create_time_entry_by_time(data:TimeEntryCreateByTime):
 
 
 def create_time_entry(user_id: int, entry_data: TimeEntryCreate):
-    """ create a new time entry in supabase """
-    
-    # Ensure both datetimes are timezone-aware
+    """ create a new time entry in supabase, ensuring Bogotá time zone """
+
+    bogota_tz = ZoneInfo("America/Bogota")
+
+    # Ensure both datetimes are timezone-aware and in Bogotá time
     if entry_data.start_time.tzinfo is None:
-        entry_data.start_time = entry_data.start_time.replace(tzinfo=timezone.utc)
+        # Assume naive datetimes are in Bogotá time
+        entry_data.start_time = entry_data.start_time.replace(tzinfo=bogota_tz)
+    else:
+        # Convert to Bogotá time if not already
+        entry_data.start_time = entry_data.start_time.astimezone(bogota_tz)
+
     if entry_data.end_time.tzinfo is None:
-        entry_data.end_time = entry_data.end_time.replace(tzinfo=timezone.utc)
+        entry_data.end_time = entry_data.end_time.replace(tzinfo=bogota_tz)
+    else:
+        entry_data.end_time = entry_data.end_time.astimezone(bogota_tz)
 
     if entry_data.start_time >= entry_data.end_time:
         return {"error": "La hora de inicio debe ser menor a la hora de finalización."}

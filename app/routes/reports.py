@@ -630,6 +630,12 @@ def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
         }
 
         # Preparar el HTML para el PDF
+        # Calcular el valor restante considerando la moneda
+        if req.currency == "USD":
+            restante = (total_case_value - new_total) / req.exchange_rate
+        else:
+            restante = total_case_value - new_total
+            
         template = env.get_template("invoice_template.html")
         html_out = template.render(
             client=client_resp.data,
@@ -643,7 +649,7 @@ def generate_invoice_by_percentage(req: InvoiceByPercentageRequest):
             currency_symbol=currency_symbol,
             billing_type="percentage",  # Solo porcentaje aquí
             total_facturado=new_total,
-            restante=total_case_value - new_total
+            restante=restante
         )
 
         # Crear el PDF

@@ -81,14 +81,14 @@ def get_all_tasks(user_id: int = None):
 
             # Filter tasks based on the retrieved client IDs and active clients
             response = supabase.table("tasks").select(
-                "id, title, status, due_date, client_id, clients!inner(name, active), area, total_billed, total_value, billing_type, note"
+                "id, title, status, due_date, client_id, clients!inner(name, active), area, total_billed, total_value, billing_type, note, permanent"
             ).in_('client_id', client_ids).eq('clients.active', True).execute()
         else:
             return []
     else:
         # Get all tasks from active clients
         response = supabase.table("tasks").select(
-            "id, title, status, due_date, note, client_id, clients!inner(name, active), area, total_billed,total_value,billing_type"
+            "id, title, status, due_date, note, client_id, clients!inner(name, active), area, total_billed,total_value,billing_type, permanent"
         ).eq('clients.active', True).execute()
 
     if not response.data:
@@ -105,7 +105,8 @@ def get_all_tasks(user_id: int = None):
             "billing_type": task.get("billing_type"),
             "note": task.get("note"),
             "total_value": task.get("total_value"),
-            "total_billed": task.get("total_billed")
+            "total_billed": task.get("total_billed"),
+            "permanent": task.get("permanent")
         }
         for task in response.data
     ]
