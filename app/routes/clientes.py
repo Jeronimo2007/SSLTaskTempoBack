@@ -65,7 +65,7 @@ async def get_clients_admin(token: str = Depends(oauth2_scheme)):
     user_id = user_data.get("id")
     user_role = user_data.get("role")  # Assuming the role is in the payload
 
-    if user_role == "consultor":
+    if user_role == "consultor" or user_role == "junior" or user_role == "auxiliar":
         response = read_clients(user_id=user_id)
     else:
         response = read_clients()

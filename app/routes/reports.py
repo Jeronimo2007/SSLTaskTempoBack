@@ -3,6 +3,7 @@ import os
 import tempfile
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.security import OAuth2PasswordBearer
+import openpyxl
 from pydantic import BaseModel
 from typing import List
 from datetime import datetime
@@ -280,7 +281,6 @@ async def download_client_report(
         headers={"Content-Disposition": f"attachment; filename=reporte_cliente_{client_name}_{request.start_date.date()}_{request.end_date.date()}.xlsx"}
     )
 
-
 @router.post("/download_task_report")
 async def download_task_report(
     request: TaskReportRequest,
@@ -303,12 +303,11 @@ async def download_task_report(
 
     task = task_response.data
     task_title = task["title"]
-    billing_type = task.get("billing_type", "hourly")
-    percentage_billed = task.get("percentage_billed", 0)
+
 
     # Obtener time entries relacionados
     entries_response = supabase.table("time_entries") \
-        .select("description, start_time, duration, facturado") \
+        .select("description, start_time, duration, facturado, user_id, id") \
         .gte("start_time", start_date) \
         .lte("end_time", end_date) \
         .eq("task_id", request.task_id) \
@@ -320,68 +319,149 @@ async def download_task_report(
 
     # Preparar datos para Excel
     excel_data = []
-    for entry in entries:
-        if billing_type == "percentage":
-            if percentage_billed >= 100:
-                estado = "si"
-            elif percentage_billed > 0:
-                estado = "parcialmente"
-            else:
-                estado = "no"
+
+    # Obtener información de la tarea
+    task_response = supabase.table("tasks").select("id, client_id, title, assignment_date, due_date, area,tarif").eq("id", request.task_id).execute()
+    if task_response.data:
+        task_data = task_response.data[0]
+    else:
+        task_data = None
+
+    # Obtener información del cliente
+    if task_data and task_data["client_id"]:
+        client_response = supabase.table("clients").select("id, name").eq("id", task_data["client_id"]).execute()
+        if client_response.data:
+            client_data = client_response.data[0]
         else:
-            estado = "si" if entry.get("facturado") else "no"
+            client_data = None
+    else:
+        client_data = None
+
+    for entry in entries:
+        # Obtener información del usuario para este time entry
+        if entry.get("user_id"):
+            user_response = supabase.table("users").select("username, role, cost_per_hour_client").eq("id", entry["user_id"]).execute()
+            if user_response.data:
+                user_data = user_response.data[0]
+            else:
+                user_data = None
+        else:
+            user_data = None
+
+        if task_data["permanent"] == True:
+            if user_data:
+                abogado = user_data["username"]
+                cargo = user_data["role"]
+                tarifa_horaria = task_data["tarif"]
+            else:
+                abogado = ""
+                cargo = ""
+                tarifa_horaria = 0
+
+        else:
+            abogado = user_data["username"]
+            cargo = user_data["role"]
+            tarifa_horaria = user_data["cost_per_hour_client"] if user_data else 0
+
+        # Calcular el total
+        tiempo_trabajado = round(entry.get("duration", 0), 2)
+        total = tarifa_horaria * tiempo_trabajado
 
         excel_data.append({
-            "Descripción": entry.get("description", ""),
-            "Fecha": entry.get("start_time", "")[:10],
-            "Duración (h)": round(entry.get("duration", 0), 2),
-            "Facturado": estado
+            "Abogado": abogado,
+            "Cargo": cargo,
+            "Cliente": client_data.get("name", "") if client_data else "",
+            "Asunto": task_data.get("title", "") if task_data else "",
+            "Trabajo": entry.get("description", ""),
+            "Area": task_data.get("area", "") if task_data else "",
+            "Fecha Trabajo": entry.get("start_time", "")[:10],
+            "Modo de Facturación": task.get("billing_type", "hourly"),
+            "Tiempo Trabajado": tiempo_trabajado,
+            "Tarifa Horaria": tarifa_horaria,
+            "Moneda": "COP",  # Assuming it's always "COP"
+            "Total": total,
+            "Facturado": "Si" if entry.get("facturado") else "No"
         })
 
-    df = pd.DataFrame(excel_data)
+    # Crear un nuevo libro de trabajo
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Entradas"
+
+    # Estilos
+    header_fill = openpyxl.styles.PatternFill(start_color='D7E4BC', end_color='D7E4BC', fill_type='solid')
+    header_font = openpyxl.styles.Font(bold=True)
+    header_alignment = openpyxl.styles.Alignment(horizontal='center', vertical='center', wrap_text=True)
+    cell_alignment = openpyxl.styles.Alignment(horizontal='center', vertical='center')
+    thin_border = openpyxl.styles.Border(
+        left=openpyxl.styles.Side(style='thin'),
+        right=openpyxl.styles.Side(style='thin'),
+        top=openpyxl.styles.Side(style='thin'),
+        bottom=openpyxl.styles.Side(style='thin')
+    )
+
+    def format_hours(hours):
+        """Convert decimal hours to 'HH:MM' format"""
+        total_minutes = int(hours * 60)
+        h = total_minutes // 60
+        m = total_minutes % 60
+        return f"{h:02d}:{m:02d}"
+
+    # Escribir el título
+    ws.merge_cells('A1:M1')
+    title_cell = ws['A1']
+    title_cell.value = f"Desglose de Tiempos - {task_title}"
+    title_cell.font = openpyxl.styles.Font(bold=True, size=14)
+    title_cell.alignment = openpyxl.styles.Alignment(horizontal='center', vertical='center')
+
+    # Escribir los encabezados
+    headers = list(excel_data[0].keys()) if excel_data else []
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=2, column=col_num, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    # Escribir los datos
+    for row_num, row in enumerate(excel_data, 3):
+        for col_num, value in enumerate(row.values(), 1):
+            # Format "Tiempo Trabajado" column (column I)
+            if col_num == 9:  # Column I is the 9th column
+                value = format_hours(float(value))
+            # Format "Modo de Facturación" column (column H)
+            elif col_num == 8:  # Column H is the 8th column
+                value = "Por Hora" if value == "hourly" else "Por Porcentaje"
+            cell = ws.cell(row=row_num, column=col_num, value=value)
+            cell.alignment = cell_alignment
+            cell.border = thin_border
+
+    # Ajustar el ancho de las columnas
+    ws.column_dimensions['A'].width = 15  # Abogado
+    ws.column_dimensions['B'].width = 10  # Cargo
+    ws.column_dimensions['C'].width = 30  # Cliente
+    ws.column_dimensions['D'].width = 30  # Asunto
+    ws.column_dimensions['E'].width = 30  # Trabajo
+    ws.column_dimensions['F'].width = 10  # Area
+    ws.column_dimensions['G'].width = 15  # Fecha Trabajo
+    ws.column_dimensions['H'].width = 15  # Modo de Facturación
+    ws.column_dimensions['I'].width = 15  # Tiempo Trabajado
+    ws.column_dimensions['J'].width = 15  # Tarifa Horaria
+    ws.column_dimensions['K'].width = 10  # Moneda
+    ws.column_dimensions['L'].width = 15  # Total
+    ws.column_dimensions['M'].width = 10  # Facturado
+
+    # Guardar el libro de trabajo en un BytesIO
     output = io.BytesIO()
-
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, sheet_name="Entradas", index=False, startrow=1)
-        workbook = writer.book
-        worksheet = writer.sheets["Entradas"]
-
-        header_format = workbook.add_format({
-            'bold': True,
-            'text_wrap': True,
-            'valign': 'vcenter',
-            'align': 'center',
-            'fg_color': '#D7E4BC',
-            'border': 1
-        })
-
-        cell_format = workbook.add_format({
-            'border': 1,
-            'align': 'center',
-            'valign': 'vcenter'
-        })
-
-        for col_num, value in enumerate(df.columns.values):
-            worksheet.write(1, col_num, value, header_format)
-            worksheet.set_column(col_num, col_num, 20)
-
-        worksheet.merge_range('A1:D1', f"Desglose de Tiempos - {task_title}", workbook.add_format({
-            'bold': True,
-            'font_size': 14,
-            'align': 'center',
-            'valign': 'vcenter'
-        }))
-
-        for row in range(len(df)):
-            for col in range(len(df.columns)):
-                value = df.iloc[row, col]
-                worksheet.write(row + 2, col, value, cell_format)
-
+    wb.save(output)
     output.seek(0)
+
+    # Crear la respuesta de transmisión
+    filename = f"desglose_tarea_{''.join(c if c.isalnum() or c == '_' else '' for c in task_title)}.xlsx"
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=desglose_tarea_{task_title.replace(' ', '_')}.xlsx"}
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
 
