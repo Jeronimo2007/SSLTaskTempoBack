@@ -181,3 +181,30 @@ class ContractUpdate(BaseModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     active: Optional[bool] = None
+
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    email: str
+    role: str
+    salary: float
+    cost: float
+    weekly_hours: float
+    cost_per_hour_client: float 
+    desvinculado: bool = False
+
+
+
+class UserUpdate(BaseModel):
+    id: int
+    username: Optional[str] = None
+    password: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    salary: Optional[float] = None
+    cost: Optional[float] = None
+    weekly_hours: Optional[float] = None
+    cost_per_hour_client: Optional[float] = None 
+    desvinculado: Optional[bool] = None

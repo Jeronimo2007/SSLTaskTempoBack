@@ -13,3 +13,4 @@ uvicorn==0.34.0
 python-multipart==0.0.7
 bcrypt==4.2.1
 XlsxWriter==3.2.2
+openpyxl==3.1.5
