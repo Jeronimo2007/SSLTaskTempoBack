@@ -208,3 +208,9 @@ class UserUpdate(BaseModel):
     weekly_hours: Optional[float] = None
     cost_per_hour_client: Optional[float] = None 
     desvinculado: Optional[bool] = None
+
+class TaskTimeEntriesRequest(BaseModel):
+    task_id: int
+    start_date: datetime
+    end_date: datetime
+    facturado: Literal["si", "no", "parcialmente"]

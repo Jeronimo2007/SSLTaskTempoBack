@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing import List
 from datetime import datetime
 from app.database.data import supabase
-from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest, TaskReportRequest
+from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest, TaskReportRequest, TaskTimeEntriesRequest
 from app.services.utils import role_required
 import pandas as pd
 import io
@@ -512,6 +512,76 @@ async def get_time_entries(data: ClientReportRequestTimeEntries, user: dict = De
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener los registros de tiempo: {str(e)}")
+
+@router.post("/task_time_entries")
+async def get_task_time_entries(
+    request: TaskTimeEntriesRequest,
+    user: dict = Depends(role_required(["socio", "senior"]))
+):
+    """Get time entries for a specific task filtered by date range and facturado status"""
+    
+    # Get time entries
+    entries_response = supabase.table("time_entries") \
+        .select("description, start_time, duration, facturado, user_id") \
+        .gte("start_time", request.start_date.strftime("%Y-%m-%d")) \
+        .lte("end_time", request.end_date.strftime("%Y-%m-%d")) \
+        .eq("task_id", request.task_id) \
+        .eq("facturado", request.facturado) \
+        .execute()
+
+    if not entries_response.data:
+        return []
+
+    # Get task info
+    task_response = supabase.table("tasks").select("id, client_id, title, area, tarif, permanent").eq("id", request.task_id).execute()
+    if not task_response.data:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    task_data = task_response.data[0]
+
+    # Get client info
+    client_response = supabase.table("clients").select("name").eq("id", task_data["client_id"]).execute()
+    if not client_response.data:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    client_name = client_response.data[0]["name"]
+
+    # Process entries
+    result = []
+    for entry in entries_response.data:
+        # Get user info
+        user_response = supabase.table("users").select("username, role, cost_per_hour_client").eq("id", entry["user_id"]).execute()
+        if not user_response.data:
+            continue
+        user_data = user_response.data[0]
+
+        # Calculate rates and totals
+        if task_data["permanent"]:
+            tarifa_horaria = task_data["tarif"]
+        else:
+            tarifa_horaria = user_data["cost_per_hour_client"]
+
+        tiempo_trabajado = round(entry["duration"], 2)
+        total = tarifa_horaria * tiempo_trabajado
+
+        # Format time
+        horas = int(tiempo_trabajado)
+        minutos = int((tiempo_trabajado - horas) * 60)
+        tiempo_formateado = f"{horas:02d}:{minutos:02d}"
+
+        result.append({
+            "abogado": user_data["username"],
+            "cargo": user_data["role"],
+            "cliente": client_name,
+            "trabajo": entry["description"],
+            "fecha_trabajo": entry["start_time"][:10],
+            "tiempo_trabajado": tiempo_formateado,
+            "tarifa_horaria": tarifa_horaria,
+            "moneda": "COP",
+            "total": total,
+            "facturado": entry["facturado"]
+        })
+
+    return result
+
 @router.post("/invoices/by-hours")
 def generate_invoice_by_hours(req: InvoiceByHoursRequest):
     try:
