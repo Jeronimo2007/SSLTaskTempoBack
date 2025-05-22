@@ -215,4 +215,4 @@ class TaskTimeEntriesRequest(BaseModel):
     task_id: int
     start_date: datetime
     end_date: datetime
-    facturado: Literal["si", "no", "parcialmente"]
+    facturado: Optional[Literal["si", "no", "parcialmente"]] = None

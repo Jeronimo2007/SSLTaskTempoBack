@@ -521,14 +521,23 @@ async def get_task_time_entries(
     """Get time entries for a specific task filtered by date range and facturado status"""
     
     # Get time entries
-    entries_response = supabase.table("time_entries") \
-        .select("description, start_time, duration, facturado, user_id") \
-        .gte("start_time", request.start_date.strftime("%Y-%m-%d")) \
-        .lte("end_time", request.end_date.strftime("%Y-%m-%d")) \
-        .eq("task_id", request.task_id) \
-        .eq("facturado", request.facturado) \
-        .execute()
 
+    if request.facturado:
+        entries_response = supabase.table("time_entries") \
+            .select("description, start_time, duration, facturado, user_id") \
+            .gte("start_time", request.start_date.strftime("%Y-%m-%d")) \
+            .lte("end_time", request.end_date.strftime("%Y-%m-%d")) \
+            .eq("task_id", request.task_id) \
+            .eq("facturado", request.facturado) \
+            .execute()
+    else:
+        entries_response = supabase.table("time_entries") \
+            .select("description, start_time, duration, facturado, user_id") \
+            .gte("start_time", request.start_date.strftime("%Y-%m-%d")) \
+            .lte("end_time", request.end_date.strftime("%Y-%m-%d")) \
+            .eq("task_id", request.task_id) \
+            .execute()
+        
     if not entries_response.data:
         return []
 
