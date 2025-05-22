@@ -321,7 +321,7 @@ async def download_task_report(
     excel_data = []
 
     # Obtener información de la tarea
-    task_response = supabase.table("tasks").select("id, client_id, title, assignment_date, due_date, area,tarif").eq("id", request.task_id).execute()
+    task_response = supabase.table("tasks").select("id, client_id, title, assignment_date, due_date, area,tarif","permanent").eq("id", request.task_id).execute()
     if task_response.data:
         task_data = task_response.data[0]
     else:

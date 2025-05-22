@@ -45,6 +45,7 @@ class TaskCreate(BaseModel):
     total_value: Optional[float] = Field(default=None, description="Requerido si billing_type es 'percentage'")
     due_date: Optional[datetime] = None
     permanent: bool = False
+    tarif: Optional[float] = None
 
 class TaskUpdate(BaseModel):
     id: int
@@ -55,6 +56,7 @@ class TaskUpdate(BaseModel):
     billing_type: Optional[Literal["hourly", "percentage"]] = None
     note: Optional[str] = None
     total_value: Optional[float] = None
+    tarif: Optional[float] = None
 
 class TaskResponse(BaseModel):
     id: int
