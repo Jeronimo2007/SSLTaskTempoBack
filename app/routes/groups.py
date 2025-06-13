@@ -24,15 +24,23 @@ async def create_group(request: GroupCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/get_groups")
-async def get_all_groups(task_id: int):
+async def get_all_groups(user_id: int):
     try:
+        # 1. Get all client_ids for this user
+        client_user_resp = supabase.table("client_user").select("client_id").eq("user_id", user_id).execute()
+        if not client_user_resp.data:
+            return []
+        client_ids = [item["client_id"] for item in client_user_resp.data]
 
-        if not task_id:
-            raise HTTPException(status_code=400, detail="task_id is required")
+        # 2. Get all task_ids for these clients
+        tasks_resp = supabase.table("tasks").select("id").in_("client_id", client_ids).execute()
+        if not tasks_resp.data:
+            return []
+        task_ids = [item["id"] for item in tasks_resp.data]
 
-
-        response = supabase.table("groups").select("*").eq("task_id",task_id).execute()
-        return response.data
+        # 3. Get all groups for these tasks
+        groups_resp = supabase.table("groups").select("*").in_("task_id", task_ids).execute()
+        return groups_resp.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

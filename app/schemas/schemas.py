@@ -6,7 +6,6 @@ from datetime import date, datetime, time
 class clientCreate(BaseModel):
     name: str
     permanent: bool
-    monthly_limit_hours: Optional[float] = 0
     lawyers: list[int]
     nit: str
     phone: str
@@ -20,7 +19,6 @@ class clientUpdate(BaseModel):
     name: Optional[str] = None
     lawyers: Optional[list[int]] = None 
     permanent: Optional[bool] = None
-    monthly_limit_hours: Optional[float] = None 
     nit: str
     phone: str
     city: str
@@ -45,7 +43,7 @@ class TaskCreate(BaseModel):
     total_value: Optional[float] = Field(default=None, description="Requerido si billing_type es 'percentage'")
     due_date: Optional[datetime] = None
     permanent: bool = False
-    tarif: Optional[float] = None
+    monthly_limit_hours_tasks: int = 0
 
 class TaskUpdate(BaseModel):
     id: int
@@ -56,7 +54,9 @@ class TaskUpdate(BaseModel):
     billing_type: Optional[Literal["hourly", "percentage"]] = None
     note: Optional[str] = None
     total_value: Optional[float] = None
-    tarif: Optional[float] = None
+    monthly_limit_hours_tasks: Optional[int] = None
+    
+
 
 class TaskResponse(BaseModel):
     id: int
@@ -127,6 +127,7 @@ class ClientReportRequestTimeEntries(BaseModel):
 
 
 class TaskReportRequest(BaseModel):
+    value_per_set_hours: float
     start_date: datetime
     end_date: datetime
     task_id: int
