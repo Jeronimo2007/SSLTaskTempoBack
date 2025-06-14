@@ -26,7 +26,7 @@ async def create_timeEntry_by_time(req: TimeEntryCreateByTime):
     return entry
 
 
-@router.post("/create", response_model=TimeEntryResponse)
+@router.post("/create")
 async def create_time_entry_endpoint(entry_data: TimeEntryCreate, user: dict = Depends(get_current_user)):
     
 
