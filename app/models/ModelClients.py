@@ -8,7 +8,6 @@ def create_client(data: clientCreate):
     try:
         name = data.name
         permanent = data.permanent
-        limit = data.monthly_limit_hours
         lawyers = data.lawyers
         nit = data.nit
         phone = data.phone
@@ -22,7 +21,6 @@ def create_client(data: clientCreate):
         response = supabase.table('clients').insert({
             'name': name,
             'permanent': permanent,
-            'monthly_limit_hours': limit,
             'nit': nit,
             'phone': phone,
             'city': city,

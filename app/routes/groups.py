@@ -23,6 +23,21 @@ async def create_group(request: GroupCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+@router.get("/get_all_groups")
+async def get_all_groups():
+    try:
+        response = supabase.table("groups").select("*").execute()
+        
+        if not response.data:
+            return []
+            
+        return response.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/get_groups")
 async def get_all_groups(user_id: int):
     try:
