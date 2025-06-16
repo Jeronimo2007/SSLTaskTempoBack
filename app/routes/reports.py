@@ -342,13 +342,13 @@ async def download_task_report(
         group_area = group_dict[entry["group_id"]]
 
         # Calcular tiempo trabajado
-        tiempo_trabajado = round(entry.get("duration", 0), 2)
+        tiempo_trabajado = round(float(entry.get("duration", 0) or 0), 2)
 
         # Calcular tarifa horaria y valor de la hora valorizada
         tarifa_horaria = 0
         hora_valorizada = 0
         total = 0
-        cost_to_firm = round(user_data["cost"] * tiempo_trabajado, 2)
+        cost_to_firm = round(user_data["cost"] * float(entry.get("duration", 0) or 0), 2)
 
         if total_time_entries_duration < task_data["monthly_limit_hours_tasks"]:
             total_time_entries_duration += tiempo_trabajado
@@ -400,7 +400,7 @@ async def download_task_report(
         if group_area not in area_data:
             area_data[group_area] = {"cost": 0, "total": 0}
         user_data = user_dict[entry["user_id"]]
-        cost_to_firm = round(user_data["cost"] * entry.get("duration", 0), 2)
+        cost_to_firm = round(user_data["cost"] * float(entry.get("duration", 0) or 0), 2)
         area_data[group_area]["cost"] += cost_to_firm
         if total_time_entries_duration <= task_data["monthly_limit_hours_tasks"]:
             tarifa_horaria = round(total_set_hours_value, 2)
