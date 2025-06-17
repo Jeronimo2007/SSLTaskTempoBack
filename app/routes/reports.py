@@ -365,8 +365,7 @@ async def download_task_report(
                 "Tarifa Horaria": tarifa_horaria,
                 "Moneda": "COP",  # Assuming it's always "COP"
                 "Total": total,
-                "Total Costo Empresa": cost_to_firm,
-                "Hora valorizada (adicionales)": hora_valorizada
+                "Facturado": entry.get("facturado", "no hay datos")
             })
         else:
             tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
@@ -386,8 +385,7 @@ async def download_task_report(
                 "Tarifa Horaria": tarifa_horaria,
                 "Moneda": "COP",  # Assuming it's always "COP"
                 "Total": total,
-                "Total Costo Empresa": cost_to_firm,
-                "Hora valorizada (adicionales)": hora_valorizada
+                "Facturado": entry.get("facturado", "no hay datos")
             })
 
     # Add the limit hours entries to the excel data
@@ -398,18 +396,20 @@ async def download_task_report(
     for entry in entries:
         group_area = group_dict[entry["group_id"]]
         if group_area not in area_data:
-            area_data[group_area] = {"cost": 0, "total": 0}
+            area_data[group_area] = {"cost": 0, "total": 0, "hours": 0}
         user_data = user_dict[entry["user_id"]]
-        cost_to_firm = round(user_data["cost"] * float(entry.get("duration", 0) or 0), 2)
+        duration = float(entry.get("duration", 0) or 0)
+        cost_to_firm = round(user_data["cost"] * duration, 2)
         area_data[group_area]["cost"] += cost_to_firm
+        area_data[group_area]["hours"] += duration
+        
         if total_time_entries_duration <= task_data["monthly_limit_hours_tasks"]:
             tarifa_horaria = round(total_set_hours_value, 2)
-            total = round(tarifa_horaria * tiempo_trabajado, 2)
+            total = round(tarifa_horaria * duration, 2)
             area_data[group_area]["total"] += total
         else:
             tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
-            hora_valorizada = round(tarifa_horaria * tiempo_trabajado, 2)
-            total = round(tarifa_horaria * tiempo_trabajado, 2)
+            total = round(tarifa_horaria * duration, 2)
             area_data[group_area]["total"] += total
 
     # Crear un nuevo libro de trabajo
@@ -444,7 +444,11 @@ async def download_task_report(
     title_cell.alignment = openpyxl.styles.Alignment(horizontal='center', vertical='center')
 
     # Escribir los encabezados
-    headers = list(excel_data[0].keys()) if excel_data else []
+    headers = [
+        "Abogado", "Cargo", "Cliente", "Asunto", "Trabajo", "Area", 
+        "Fecha Trabajo", "Modo de Facturación", "Tiempo Trabajado", 
+        "Tarifa Horaria", "Moneda", "Total", "Facturado"
+    ]
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=2, column=col_num, value=header)
         cell.fill = header_fill
@@ -461,23 +465,29 @@ async def download_task_report(
             # Format "Modo de Facturación" column (column H)
             elif col_num == 8:  # Column H is the 8th column
                 value = "Por Hora" if value == "hourly" else "Por Porcentaje"
+            # Format numeric columns with commas
+            elif col_num in [10, 12]:  # Tarifa Horaria and Total columns
+                if isinstance(value, (int, float)):
+                    value = f"{value:,.2f}"
             cell = ws.cell(row=row_num, column=col_num, value=value)
             cell.alignment = cell_alignment
             cell.border = thin_border
 
     # Add a total row at the bottom
     total_sum = sum(entry["Total"] for entry in excel_data)
-    total_costo_empresa = sum(entry["Total Costo Empresa"] for entry in excel_data)
-    ws.append(["", "", "", "", "", "", "", "", "", "", "Total Horas Adicionales:", round(total_sum, 2), "Total Costo Empresa:", round(total_costo_empresa, 2)])
+    ws.append(["", "", "", "", "", "", "", "", "", "", "Total Horas Adicionales:", f"{round(total_sum, 2):,.2f}", ""])
 
-    # Write Tarifa Mensual
+    # Write Tarifa Mensual and Monthly Limit Hours
     group_start_row = len(excel_data) + 5
     current_row = group_start_row - 2
     ws.cell(row=current_row, column=1).value = "Tarifa Mensual"
-    ws.cell(row=current_row, column=2).value = round(total_set_hours_value, 2)
+    ws.cell(row=current_row, column=2).value = f"{round(total_set_hours_value, 2):,.2f}"
+    current_row += 1
+    ws.cell(row=current_row, column=1).value = "Horas Mensuales Límite"
+    ws.cell(row=current_row, column=2).value = f"{task_data['monthly_limit_hours_tasks']:,.2f}"
 
     # Escribir la información de los grupos
-    group_start_row = len(excel_data) + 5
+    group_start_row = len(excel_data) + 7
     current_row = group_start_row
 
     for area, data in area_data.items():
@@ -488,16 +498,21 @@ async def download_task_report(
         title_cell.alignment = openpyxl.styles.Alignment(horizontal='center', vertical='center')
         current_row += 1
 
-        ws.cell(row=current_row, column=1).value = "Costo a la firma"
-        ws.cell(row=current_row, column=2).value = round(data["cost"], 2)
+        ws.cell(row=current_row, column=1).value = "Horas Trabajadas"
+        ws.cell(row=current_row, column=2).value = f"{round(data['hours'], 2):,.2f}"
         current_row += 1
+        
+        ws.cell(row=current_row, column=1).value = "Costo a la firma"
+        ws.cell(row=current_row, column=2).value = f"{round(data['cost'], 2):,.2f}"
+        current_row += 1
+        
         ws.cell(row=current_row, column=1).value = "Total generado"
-        ws.cell(row=current_row, column=2).value = round(data["total"], 2)
+        ws.cell(row=current_row, column=2).value = f"{round(data['total'], 2):,.2f}"
         current_row += 2
 
     # Ajustar el ancho de las columnas
-    ws.column_dimensions['A'].width = 15  # Abogado
-    ws.column_dimensions['B'].width = 10  # Cargo
+    ws.column_dimensions['A'].width = 30  # Abogado
+    ws.column_dimensions['B'].width = 20  # Cargo
     ws.column_dimensions['C'].width = 30  # Cliente
     ws.column_dimensions['D'].width = 30  # Asunto
     ws.column_dimensions['E'].width = 30  # Trabajo
@@ -506,10 +521,9 @@ async def download_task_report(
     ws.column_dimensions['H'].width = 15  # Modo de Facturación
     ws.column_dimensions['I'].width = 15  # Tiempo Trabajado
     ws.column_dimensions['J'].width = 15  # Tarifa Horaria
-    ws.column_dimensions['K'].width = 30  # Moneda
+    ws.column_dimensions['K'].width = 10  # Moneda
     ws.column_dimensions['L'].width = 15  # Total
-    ws.column_dimensions['M'].width = 25  # Hora valorizada (adicionales)
-    ws.column_dimensions['N'].width = 25  # Total Costo Empresa
+    ws.column_dimensions['M'].width = 15  # Facturado
 
     # Guardar el libro de trabajo en un BytesIO
     output = io.BytesIO()
