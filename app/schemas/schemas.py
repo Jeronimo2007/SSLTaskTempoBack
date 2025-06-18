@@ -94,6 +94,10 @@ class TimeEntryUpdate(BaseModel):
     id: int
     description: Optional[str] = None
 
+class FacturadoUpdate(BaseModel):
+    timeEntry_id: int
+    facturado: Literal["si", "no", "parcialmente"]
+
 
 class TimeEntryResponse(BaseModel):
     id: int

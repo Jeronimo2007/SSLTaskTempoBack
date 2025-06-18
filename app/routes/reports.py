@@ -633,7 +633,7 @@ async def get_task_time_entries(
             .execute()
     else:
         entries_response = supabase.table("time_entries") \
-            .select("description, start_time, duration, facturado, user_id") \
+            .select("id,description, start_time, duration, facturado, user_id") \
             .gte("start_time", request.start_date.strftime("%Y-%m-%d")) \
             .lte("end_time", request.end_date.strftime("%Y-%m-%d")) \
             .eq("task_id", request.task_id) \
@@ -674,6 +674,7 @@ async def get_task_time_entries(
         tiempo_formateado = f"{horas:02d}:{minutos:02d}"
 
         result.append({
+            "id": entry.get("id"),  
             "abogado": user_data["username"],
             "cargo": user_data["role"],
             "cliente": client_name,
