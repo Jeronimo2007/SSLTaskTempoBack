@@ -64,11 +64,12 @@ async def get_hours_by_client(
             if client_id not in client_hours:
                 client_hours[client_id] = {"total_hours": 0, "tasks": {}}
             
-            client_hours[client_id]["total_hours"] += entry["duration"]
+            duration = entry.get("duration", 0) or 0  # Handle None values
+            client_hours[client_id]["total_hours"] += duration
             
             if task_id not in client_hours[client_id]["tasks"]:
                 client_hours[client_id]["tasks"][task_id] = {"title": task_title, "hours": 0}
-            client_hours[client_id]["tasks"][task_id]["hours"] += entry["duration"]
+            client_hours[client_id]["tasks"][task_id]["hours"] += duration
 
     client_response = supabase.table("clients").select("id, name").execute()
     client_dict = {client["id"]: client["name"] for client in client_response.data}
@@ -345,33 +346,46 @@ async def download_task_report(
         tiempo_trabajado = round(float(entry.get("duration", 0) or 0), 2)
 
         # Calcular tarifa horaria y valor de la hora valorizada
-        tarifa_horaria = 0
-        hora_valorizada = 0
-        total = 0
-        cost_to_firm = round(user_data["cost"] * float(entry.get("duration", 0) or 0), 2)
+        tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
+        total = round(tarifa_horaria * tiempo_trabajado, 2)
+        cost_to_firm = round(user_data["cost"] * tiempo_trabajado, 2)
 
-        if total_time_entries_duration < task_data["monthly_limit_hours_tasks"]:
-            total_time_entries_duration += tiempo_trabajado
-            limit_hours_entries.append({
-                "Abogado": user_data["username"],
-                "Cargo": user_data["role"],
-                "Cliente": client_data["name"],
-                "Asunto": task_data["title"],
-                "Trabajo": entry["description"],
-                "Area": group_area,
-                "Fecha Trabajo": entry["start_time"][:10],
-                "Modo de Facturación": "Asesoría Mensual",  # Assuming it's always "Asesoría Mensual"
-                "Tiempo Trabajado": tiempo_trabajado,
-                "Tarifa Horaria": tarifa_horaria,
-                "Moneda": "COP",  # Assuming it's always "COP"
-                "Total": total,
-                "Facturado": entry.get("facturado", "no hay datos")
-            })
+        if total_set_hours_value > 0:
+            if total_time_entries_duration < task_data["monthly_limit_hours_tasks"]:
+                total_time_entries_duration += tiempo_trabajado
+                limit_hours_entries.append({
+                    "Abogado": user_data["username"],
+                    "Cargo": user_data["role"],
+                    "Cliente": client_data["name"],
+                    "Asunto": task_data["title"],
+                    "Trabajo": entry["description"],
+                    "Area": group_area,
+                    "Fecha Trabajo": entry["start_time"][:10],
+                    "Modo de Facturación": "Asesoría Mensual",
+                    "Tiempo Trabajado": tiempo_trabajado,
+                    "Tarifa Horaria": tarifa_horaria,
+                    "Moneda": "COP",
+                    "Total": total,
+                    "Facturado": entry.get("facturado", "no hay datos")
+                })
+            else:
+                over_limit_total += cost_to_firm
+                excel_data.append({
+                    "Abogado": user_data["username"],
+                    "Cargo": user_data["role"],
+                    "Cliente": client_data["name"],
+                    "Asunto": task_data["title"],
+                    "Trabajo": entry["description"],
+                    "Area": group_area,
+                    "Fecha Trabajo": entry["start_time"][:10],
+                    "Modo de Facturación": "Asesoría Mensual",
+                    "Tiempo Trabajado": tiempo_trabajado,
+                    "Tarifa Horaria": tarifa_horaria,
+                    "Moneda": "COP",
+                    "Total": total,
+                    "Facturado": entry.get("facturado", "no hay datos")
+                })
         else:
-            tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
-            hora_valorizada = round(tarifa_horaria * tiempo_trabajado, 2)
-            total = round(tarifa_horaria * tiempo_trabajado, 2)
-            over_limit_total += cost_to_firm
             excel_data.append({
                 "Abogado": user_data["username"],
                 "Cargo": user_data["role"],
@@ -380,37 +394,17 @@ async def download_task_report(
                 "Trabajo": entry["description"],
                 "Area": group_area,
                 "Fecha Trabajo": entry["start_time"][:10],
-                "Modo de Facturación": "Asesoría Mensual",  # Assuming it's always "Asesoría Mensual"
+                "Modo de Facturación": "Por Hora",
                 "Tiempo Trabajado": tiempo_trabajado,
                 "Tarifa Horaria": tarifa_horaria,
-                "Moneda": "COP",  # Assuming it's always "COP"
+                "Moneda": "COP",
                 "Total": total,
                 "Facturado": entry.get("facturado", "no hay datos")
             })
 
     # Add the limit hours entries to the excel data
-    excel_data = limit_hours_entries + excel_data
-
-    # Group data by area
-    area_data = {}
-    for entry in entries:
-        group_area = group_dict[entry["group_id"]]
-        if group_area not in area_data:
-            area_data[group_area] = {"cost": 0, "total": 0, "hours": 0}
-        user_data = user_dict[entry["user_id"]]
-        duration = float(entry.get("duration", 0) or 0)
-        cost_to_firm = round(user_data["cost"] * duration, 2)
-        area_data[group_area]["cost"] += cost_to_firm
-        area_data[group_area]["hours"] += duration
-        
-        if total_time_entries_duration <= task_data["monthly_limit_hours_tasks"]:
-            tarifa_horaria = round(total_set_hours_value, 2)
-            total = round(tarifa_horaria * duration, 2)
-            area_data[group_area]["total"] += total
-        else:
-            tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
-            total = round(tarifa_horaria * duration, 2)
-            area_data[group_area]["total"] += total
+    if total_set_hours_value > 0:
+        excel_data = limit_hours_entries + excel_data
 
     # Crear un nuevo libro de trabajo
     wb = openpyxl.Workbook()
@@ -437,7 +431,7 @@ async def download_task_report(
         return f"{h:02d}:{m:02d}"
 
     # Escribir el título
-    ws.merge_cells('A1:N1')
+    ws.merge_cells('A1:M1')
     title_cell = ws['A1']
     title_cell.value = f"Desglose de Tiempos - {task_data['title']}"
     title_cell.font = openpyxl.styles.Font(bold=True, size=14)
@@ -473,23 +467,55 @@ async def download_task_report(
             cell.alignment = cell_alignment
             cell.border = thin_border
 
+    # Group data by area
+    area_data = {}
+    for entry in entries:
+        group_area = group_dict[entry["group_id"]]
+        if group_area not in area_data:
+            area_data[group_area] = {"cost": 0, "total": 0, "hours": 0}
+        user_data = user_dict[entry["user_id"]]
+        duration = float(entry.get("duration", 0) or 0)
+        cost_to_firm = round(user_data["cost"] * duration, 2)
+        area_data[group_area]["cost"] += cost_to_firm
+        area_data[group_area]["hours"] += duration
+        
+        if total_set_hours_value > 0:
+            if total_time_entries_duration <= task_data["monthly_limit_hours_tasks"]:
+                tarifa_horaria = round(total_set_hours_value, 2)
+                total = round(tarifa_horaria * duration, 2)
+                area_data[group_area]["total"] += total
+            else:
+                tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
+                total = round(tarifa_horaria * duration, 2)
+                area_data[group_area]["total"] += total
+        else:
+            tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
+            total = round(tarifa_horaria * duration, 2)
+            area_data[group_area]["total"] += total
+
     # Add a total row at the bottom
     total_sum = sum(entry["Total"] for entry in excel_data)
-    ws.append(["", "", "", "", "", "", "", "", "", "", "Total Horas Adicionales:", f"{round(total_sum, 2):,.2f}", ""])
+    if total_set_hours_value > 0:
+        ws.append(["", "", "", "", "", "", "", "", "", "", "Total Horas Adicionales:", f"{round(total_sum, 2):,.2f}", ""])
+    else:
+        ws.append(["", "", "", "", "", "", "", "", "", "", "Total:", f"{round(total_sum, 2):,.2f}", ""])
 
-    # Write Tarifa Mensual and Monthly Limit Hours
-    group_start_row = len(excel_data) + 5
-    current_row = group_start_row - 2
-    ws.cell(row=current_row, column=1).value = "Tarifa Mensual"
-    ws.cell(row=current_row, column=2).value = f"{round(total_set_hours_value, 2):,.2f}"
-    current_row += 1
-    ws.cell(row=current_row, column=1).value = "Horas Mensuales Límite"
-    ws.cell(row=current_row, column=2).value = f"{task_data['monthly_limit_hours_tasks']:,.2f}"
+    # Write Tarifa Mensual and Monthly Limit Hours only if value_per_set_hours > 0
+    if total_set_hours_value > 0:
+        group_start_row = len(excel_data) + 5
+        current_row = group_start_row - 2
+        ws.cell(row=current_row, column=1).value = "Tarifa Mensual"
+        ws.cell(row=current_row, column=2).value = f"{round(total_set_hours_value, 2):,.2f}"
+        current_row += 1
+        ws.cell(row=current_row, column=1).value = "Horas Mensuales Límite"
+        ws.cell(row=current_row, column=2).value = f"{task_data['monthly_limit_hours_tasks']:,.2f}"
+        group_start_row = len(excel_data) + 7
+    else:
+        group_start_row = len(excel_data) + 4
 
-    # Escribir la información de los grupos
-    group_start_row = len(excel_data) + 7
     current_row = group_start_row
 
+    # Escribir la información de los grupos
     for area, data in area_data.items():
         ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=3)
         title_cell = ws.cell(row=current_row, column=1)
@@ -597,7 +623,6 @@ async def get_task_time_entries(
     """Get time entries for a specific task filtered by date range and facturado status"""
     
     # Get time entries
-
     if request.facturado:
         entries_response = supabase.table("time_entries") \
             .select("description, start_time, duration, facturado, user_id") \
@@ -618,7 +643,7 @@ async def get_task_time_entries(
         return []
 
     # Get task info
-    task_response = supabase.table("tasks").select("id, client_id, title, area, tarif, permanent").eq("id", request.task_id).execute()
+    task_response = supabase.table("tasks").select("id, client_id, title, area").eq("id", request.task_id).execute()
     if not task_response.data:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
     task_data = task_response.data[0]
@@ -639,12 +664,8 @@ async def get_task_time_entries(
         user_data = user_response.data[0]
 
         # Calculate rates and totals
-        if task_data["permanent"]:
-            tarifa_horaria = task_data["tarif"]
-        else:
-            tarifa_horaria = user_data["cost_per_hour_client"]
-
-        tiempo_trabajado = round(entry["duration"], 2)
+        tarifa_horaria = user_data["cost_per_hour_client"]
+        tiempo_trabajado = round(entry.get("duration", 0) or 0, 2)  # Handle None values
         total = tarifa_horaria * tiempo_trabajado
 
         # Format time
