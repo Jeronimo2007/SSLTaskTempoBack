@@ -31,8 +31,7 @@ def create_time_entry_by_time(data:TimeEntryCreateByTime):
         "user_id": data.user_id,
         "start_time": start_time.isoformat(),
         "end_time": end_time.isoformat(),
-        "description": data.description,
-        "group_id": data.group_id
+        "description": data.description
     }).execute()
 
     if response.data: return response.data[0]
@@ -68,8 +67,7 @@ def create_time_entry(user_id: int, entry_data: TimeEntryCreate):
         "duration": duration,
         "start_time": entry_data.start_time.isoformat(),
         "end_time": entry_data.end_time.isoformat(),
-        "description": entry_data.description,
-        "group_id": entry_data.group_id
+        "description": entry_data.description
     }).execute()
 
     if response.data:

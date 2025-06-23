@@ -79,7 +79,7 @@ class TimeEntryCreateByTime(BaseModel):
     start_time: datetime
     description: str
     duration: float
-    group_id:int
+    
 
 
 class TimeEntryCreate(BaseModel):
@@ -87,7 +87,7 @@ class TimeEntryCreate(BaseModel):
     start_time: datetime
     end_time: datetime
     description: str
-    group_id: int
+    
 
 
 class TimeEntryUpdate(BaseModel):
@@ -229,9 +229,9 @@ class TaskTimeEntriesRequest(BaseModel):
 class GroupCreate(BaseModel):
     group_name: str
     area: str
-    task_id: int
+    
 
 class GroupUpdate(BaseModel):
     group_name: Optional[str] = None
     area: Optional[str] = None
-    task_id: int
+    

@@ -350,7 +350,7 @@ async def download_task_report(
         total = round(tarifa_horaria * tiempo_trabajado, 2)
         cost_to_firm = round(user_data["cost"] * tiempo_trabajado, 2)
 
-        if total_set_hours_value > 0:
+        if total_set_hours_value is not 0:
             if total_time_entries_duration < task_data["monthly_limit_hours_tasks"]:
                 total_time_entries_duration += tiempo_trabajado
                 limit_hours_entries.append({
@@ -403,7 +403,7 @@ async def download_task_report(
             })
 
     # Add the limit hours entries to the excel data
-    if total_set_hours_value > 0:
+    if total_set_hours_value is not 0:
         excel_data = limit_hours_entries + excel_data
 
     # Crear un nuevo libro de trabajo
@@ -500,18 +500,8 @@ async def download_task_report(
     else:
         ws.append(["", "", "", "", "", "", "", "", "", "", "Total:", f"{round(total_sum, 2):,.2f}", ""])
 
-    # Write Tarifa Mensual and Monthly Limit Hours only if value_per_set_hours > 0
-    if total_set_hours_value > 0:
-        group_start_row = len(excel_data) + 5
-        current_row = group_start_row - 2
-        ws.cell(row=current_row, column=1).value = "Tarifa Mensual"
-        ws.cell(row=current_row, column=2).value = f"{round(total_set_hours_value, 2):,.2f}"
-        current_row += 1
-        ws.cell(row=current_row, column=1).value = "Horas Mensuales Límite"
-        ws.cell(row=current_row, column=2).value = f"{task_data['monthly_limit_hours_tasks']:,.2f}"
-        group_start_row = len(excel_data) + 7
-    else:
-        group_start_row = len(excel_data) + 4
+    
+    group_start_row = len(excel_data) + 4
 
     current_row = group_start_row
 
