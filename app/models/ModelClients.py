@@ -100,7 +100,7 @@ def update_client(data: clientUpdate):
     name = data.name
     lawyers = data.lawyers
     permanent = data.permanent
-    limit = data.monthly_limit_hours
+    
     nit = data.nit
     phone = data.phone
     city = data.city
@@ -115,8 +115,7 @@ def update_client(data: clientUpdate):
     if permanent is not None:
         update_data['permanent'] = permanent
 
-    if limit is not None:
-        update_data['monthly_limit_hours'] = limit
+    
 
     if nit is not None:
         update_data['nit'] = nit

@@ -287,7 +287,7 @@ async def download_task_report(
     request: TaskReportRequest,
     user: dict = Depends(role_required(["socio", "senior", "consultor"]))
 ):
-    """Download a detailed report of time entries for a specific task"""
+    """Download a detailed report of time entries for a specific task (with area from tasks.area)"""
 
     # Obtener la tarea
     start_date = request.start_date.strftime("%Y-%m-%d")
@@ -295,7 +295,7 @@ async def download_task_report(
 
     # Obtener time entries relacionados
     entries_response = supabase.table("time_entries") \
-        .select("description, start_time, duration, user_id, group_id") \
+        .select("description, start_time, duration, user_id") \
         .gte("start_time", start_date) \
         .lte("end_time", end_date) \
         .eq("task_id", request.task_id) \
@@ -305,8 +305,8 @@ async def download_task_report(
     if not entries:
         raise HTTPException(status_code=404, detail="No hay registros de tiempo para esta tarea")
 
-    # Obtener información de la tarea
-    task_response = supabase.table("tasks").select("id, client_id, title, monthly_limit_hours_tasks").eq("id", request.task_id).execute()
+    # Obtener información de la tarea (ahora incluye area)
+    task_response = supabase.table("tasks").select("id, client_id, title, monthly_limit_hours_tasks, area").eq("id", request.task_id).execute()
     if not task_response.data:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
     task_data = task_response.data[0]
@@ -316,13 +316,6 @@ async def download_task_report(
     if not client_response.data:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     client_data = client_response.data[0]
-
-    # Obtener información de los grupos
-    group_ids = list(set([entry["group_id"] for entry in entries]))
-    groups_response = supabase.table("groups").select("id, area").in_("id", group_ids).execute()
-    if not groups_response.data:
-        raise HTTPException(status_code=404, detail="Grupo no encontrado")
-    group_dict = {group["id"]: group["area"] for group in groups_response.data}
 
     # Obtener información de los usuarios
     user_ids = list(set([entry["user_id"] for entry in entries]))
@@ -340,7 +333,6 @@ async def download_task_report(
     over_limit_total = 0
     for entry in entries:
         user_data = user_dict[entry["user_id"]]
-        group_area = group_dict[entry["group_id"]]
 
         # Calcular tiempo trabajado
         tiempo_trabajado = round(float(entry.get("duration", 0) or 0), 2)
@@ -350,57 +342,31 @@ async def download_task_report(
         total = round(tarifa_horaria * tiempo_trabajado, 2)
         cost_to_firm = round(user_data["cost"] * tiempo_trabajado, 2)
 
+        row = {
+            "Abogado": user_data["username"],
+            "Cargo": user_data["role"],
+            "Cliente": client_data["name"],
+            "Asunto": task_data["title"],
+            "Trabajo": entry["description"],
+            "Área": task_data.get("area", ""),
+            "Fecha Trabajo": entry["start_time"][:10],
+            "Modo de Facturación": "Asesoría Mensual" if total_set_hours_value is not 0 else "Por Hora",
+            "Tiempo Trabajado": tiempo_trabajado,
+            "Tarifa Horaria": tarifa_horaria,
+            "Moneda": "COP",
+            "Total": total,
+            "Facturado": entry.get("facturado", "no hay datos")
+        }
+
         if total_set_hours_value is not 0:
             if total_time_entries_duration < task_data["monthly_limit_hours_tasks"]:
                 total_time_entries_duration += tiempo_trabajado
-                limit_hours_entries.append({
-                    "Abogado": user_data["username"],
-                    "Cargo": user_data["role"],
-                    "Cliente": client_data["name"],
-                    "Asunto": task_data["title"],
-                    "Trabajo": entry["description"],
-                    "Area": group_area,
-                    "Fecha Trabajo": entry["start_time"][:10],
-                    "Modo de Facturación": "Asesoría Mensual",
-                    "Tiempo Trabajado": tiempo_trabajado,
-                    "Tarifa Horaria": tarifa_horaria,
-                    "Moneda": "COP",
-                    "Total": total,
-                    "Facturado": entry.get("facturado", "no hay datos")
-                })
+                limit_hours_entries.append(row)
             else:
                 over_limit_total += cost_to_firm
-                excel_data.append({
-                    "Abogado": user_data["username"],
-                    "Cargo": user_data["role"],
-                    "Cliente": client_data["name"],
-                    "Asunto": task_data["title"],
-                    "Trabajo": entry["description"],
-                    "Area": group_area,
-                    "Fecha Trabajo": entry["start_time"][:10],
-                    "Modo de Facturación": "Asesoría Mensual",
-                    "Tiempo Trabajado": tiempo_trabajado,
-                    "Tarifa Horaria": tarifa_horaria,
-                    "Moneda": "COP",
-                    "Total": total,
-                    "Facturado": entry.get("facturado", "no hay datos")
-                })
+                excel_data.append(row)
         else:
-            excel_data.append({
-                "Abogado": user_data["username"],
-                "Cargo": user_data["role"],
-                "Cliente": client_data["name"],
-                "Asunto": task_data["title"],
-                "Trabajo": entry["description"],
-                "Area": group_area,
-                "Fecha Trabajo": entry["start_time"][:10],
-                "Modo de Facturación": "Por Hora",
-                "Tiempo Trabajado": tiempo_trabajado,
-                "Tarifa Horaria": tarifa_horaria,
-                "Moneda": "COP",
-                "Total": total,
-                "Facturado": entry.get("facturado", "no hay datos")
-            })
+            excel_data.append(row)
 
     # Add the limit hours entries to the excel data
     if total_set_hours_value is not 0:
@@ -437,10 +403,10 @@ async def download_task_report(
     title_cell.font = openpyxl.styles.Font(bold=True, size=14)
     title_cell.alignment = openpyxl.styles.Alignment(horizontal='center', vertical='center')
 
-    # Escribir los encabezados
+    # Escribir los encabezados (incluye Área)
     headers = [
-        "Abogado", "Cargo", "Cliente", "Asunto", "Trabajo", "Area", 
-        "Fecha Trabajo", "Modo de Facturación", "Tiempo Trabajado", 
+        "Abogado", "Cargo", "Cliente", "Asunto", "Trabajo", "Área",
+        "Fecha Trabajo", "Modo de Facturación", "Tiempo Trabajado",
         "Tarifa Horaria", "Moneda", "Total", "Facturado"
     ]
     for col_num, header in enumerate(headers, 1):
@@ -453,12 +419,12 @@ async def download_task_report(
     # Escribir los datos
     for row_num, row in enumerate(excel_data, 3):
         for col_num, value in enumerate(row.values(), 1):
-            # Format "Tiempo Trabajado" column (column I)
+            # Format "Tiempo Trabajado" column (column I, now 9th column)
             if col_num == 9:  # Column I is the 9th column
                 value = format_hours(float(value))
-            # Format "Modo de Facturación" column (column H)
+            # Format "Modo de Facturación" column (column H, now 8th column)
             elif col_num == 8:  # Column H is the 8th column
-                value = "Por Hora" if value == "hourly" else "Por Porcentaje"
+                value = "Por Hora" if value == "hourly" else value
             # Format numeric columns with commas
             elif col_num in [10, 12]:  # Tarifa Horaria and Total columns
                 if isinstance(value, (int, float)):
@@ -467,72 +433,20 @@ async def download_task_report(
             cell.alignment = cell_alignment
             cell.border = thin_border
 
-    # Group data by area
-    area_data = {}
-    for entry in entries:
-        group_area = group_dict[entry["group_id"]]
-        if group_area not in area_data:
-            area_data[group_area] = {"cost": 0, "total": 0, "hours": 0}
-        user_data = user_dict[entry["user_id"]]
-        duration = float(entry.get("duration", 0) or 0)
-        cost_to_firm = round(user_data["cost"] * duration, 2)
-        area_data[group_area]["cost"] += cost_to_firm
-        area_data[group_area]["hours"] += duration
-        
-        if total_set_hours_value > 0:
-            if total_time_entries_duration <= task_data["monthly_limit_hours_tasks"]:
-                tarifa_horaria = round(total_set_hours_value, 2)
-                total = round(tarifa_horaria * duration, 2)
-                area_data[group_area]["total"] += total
-            else:
-                tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
-                total = round(tarifa_horaria * duration, 2)
-                area_data[group_area]["total"] += total
-        else:
-            tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
-            total = round(tarifa_horaria * duration, 2)
-            area_data[group_area]["total"] += total
-
     # Add a total row at the bottom
     total_sum = sum(entry["Total"] for entry in excel_data)
     if total_set_hours_value > 0:
-        ws.append(["", "", "", "", "", "", "", "", "", "", "Total Horas Adicionales:", f"{round(total_sum, 2):,.2f}", ""])
+        ws.append(["", "", "", "", "", "", "", "", "", "", "", "Total Horas Adicionales:", f"{round(total_sum, 2):,.2f}", ""])
     else:
-        ws.append(["", "", "", "", "", "", "", "", "", "", "Total:", f"{round(total_sum, 2):,.2f}", ""])
+        ws.append(["", "", "", "", "", "", "", "", "", "", "", "Total:", f"{round(total_sum, 2):,.2f}", ""])
 
-    
-    group_start_row = len(excel_data) + 4
-
-    current_row = group_start_row
-
-    # Escribir la información de los grupos
-    for area, data in area_data.items():
-        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=3)
-        title_cell = ws.cell(row=current_row, column=1)
-        title_cell.value = f"Grupo {area}"
-        title_cell.font = openpyxl.styles.Font(bold=True)
-        title_cell.alignment = openpyxl.styles.Alignment(horizontal='center', vertical='center')
-        current_row += 1
-
-        ws.cell(row=current_row, column=1).value = "Horas Trabajadas"
-        ws.cell(row=current_row, column=2).value = f"{round(data['hours'], 2):,.2f}"
-        current_row += 1
-        
-        ws.cell(row=current_row, column=1).value = "Costo a la firma"
-        ws.cell(row=current_row, column=2).value = f"{round(data['cost'], 2):,.2f}"
-        current_row += 1
-        
-        ws.cell(row=current_row, column=1).value = "Total generado"
-        ws.cell(row=current_row, column=2).value = f"{round(data['total'], 2):,.2f}"
-        current_row += 2
-
-    # Ajustar el ancho de las columnas
+    # Ajustar el ancho de las columnas (incluye Área)
     ws.column_dimensions['A'].width = 30  # Abogado
     ws.column_dimensions['B'].width = 20  # Cargo
     ws.column_dimensions['C'].width = 30  # Cliente
     ws.column_dimensions['D'].width = 30  # Asunto
     ws.column_dimensions['E'].width = 30  # Trabajo
-    ws.column_dimensions['F'].width = 10  # Area
+    ws.column_dimensions['F'].width = 15  # Área
     ws.column_dimensions['G'].width = 15  # Fecha Trabajo
     ws.column_dimensions['H'].width = 15  # Modo de Facturación
     ws.column_dimensions['I'].width = 15  # Tiempo Trabajado
@@ -553,9 +467,6 @@ async def download_task_report(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
-
-
-
 
 @router.post("/get_time_entries")
 async def get_time_entries(data: ClientReportRequestTimeEntries, user: dict = Depends(role_required(["socio", "senior", "consultor"]))):
