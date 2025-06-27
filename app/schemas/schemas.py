@@ -228,10 +228,13 @@ class TaskTimeEntriesRequest(BaseModel):
 
 class GroupCreate(BaseModel):
     group_name: str
-    area: str
+    tasks: List[int]
+    client_id: int
+    monthly_limit_hours: int
     
 
 class GroupUpdate(BaseModel):
     group_name: Optional[str] = None
-    area: Optional[str] = None
+    tasks: Optional[List[int]] = None
+    monthly_limit_hours: Optional[int] = None
     
