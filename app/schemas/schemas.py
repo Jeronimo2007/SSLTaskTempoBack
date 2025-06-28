@@ -131,12 +131,15 @@ class ClientReportRequestTimeEntries(BaseModel):
 
 
 class TaskReportRequest(BaseModel):
-    value_per_set_hours: float
     start_date: datetime
     end_date: datetime
     task_id: int
 
-
+class GroupReportRequest(BaseModel):
+    value_per_set_hours: float
+    start_date: datetime
+    end_date: datetime
+    task_id: int
 
 class InvoiceByHoursRequest(BaseModel):
     client_id: int
