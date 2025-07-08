@@ -44,6 +44,7 @@ class TaskCreate(BaseModel):
     due_date: Optional[datetime] = None
     permanent: bool = False
     monthly_limit_hours_tasks: int = 0
+    facturado: str = 'no'
 
 class TaskUpdate(BaseModel):
     id: int
@@ -55,6 +56,7 @@ class TaskUpdate(BaseModel):
     note: Optional[str] = None
     total_value: Optional[float] = None
     monthly_limit_hours_tasks: Optional[int] = None
+    facturado: Optional[Literal["si", "no", "parcialmente"]] = None
     
 
 
