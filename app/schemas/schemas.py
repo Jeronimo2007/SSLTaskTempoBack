@@ -12,6 +12,8 @@ class clientCreate(BaseModel):
     city: str
     address: str
     email: str
+    international : bool
+    type: Literal['natural','juridica'] = 'natural'  # Default to 'natural'
 
 
 class clientUpdate(BaseModel):
@@ -24,6 +26,8 @@ class clientUpdate(BaseModel):
     city: str
     address: str
     email: str
+    international: Optional[bool] = None
+    type: Optional[Literal['natural', 'juridica']] = None  # Default to 'natural' if not provided
 
 
 

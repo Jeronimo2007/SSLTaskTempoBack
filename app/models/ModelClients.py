@@ -14,6 +14,8 @@ def create_client(data: clientCreate):
         city = data.city
         address = data.address
         email = data.email
+        international = data.international
+        type = data.type
 
         print(f"Creating client with name: {name} and lawyers: {lawyers}")
 
@@ -25,7 +27,9 @@ def create_client(data: clientCreate):
             'phone': phone,
             'city': city,
             'address': address,
-            'email': email
+            'email': email,
+            'internacional': international,
+            'type': type,
 
         }).execute()
 
@@ -107,15 +111,23 @@ def update_client(data: clientUpdate):
     address = data.address
     email = data.email
     client_id = data.id
+    international = data.international
+    type = data.type
     
     update_data = {}
+
+    if type is not None:
+        update_data['type'] = type
+
+
     if name is not None:
         update_data['name'] = name
 
     if permanent is not None:
         update_data['permanent'] = permanent
 
-    
+    if international is not None:
+        update_data['international'] = international
 
     if nit is not None:
         update_data['nit'] = nit
