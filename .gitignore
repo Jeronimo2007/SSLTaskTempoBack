@@ -34,3 +34,5 @@ supabase/
 
 .qodoapp/.env
 .qodo
+
+.DS_Store

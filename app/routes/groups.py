@@ -42,13 +42,13 @@ async def create_group(request: GroupCreate):
 async def get_all_groups():
     try:
         
-        groups_response = supabase.table("groups").select("id, group_name").execute()
+        groups_response = supabase.table("groups").select("id, group_name, monthly_limit_hours").execute()
         if not groups_response.data:
             return []
         groups = groups_response.data
 
        
-        group_tasks_response = supabase.table("groups_tasks").select("group_id, task_id").execute()
+        group_tasks_response = supabase.table("groups_tasks").select("group_id, task_id, client_id").execute()
         if not group_tasks_response.data:
             group_tasks = []
         else:
@@ -65,17 +65,33 @@ async def get_all_groups():
         
         from collections import defaultdict
         group_id_to_task_ids = defaultdict(list)
+        group_id_to_client_id = {}
         for gt in group_tasks:
             group_id_to_task_ids[gt["group_id"]].append(gt["task_id"])
+            # Store the client_id for each group (assuming all tasks in a group belong to the same client)
+            if gt["group_id"] not in group_id_to_client_id:
+                group_id_to_client_id[gt["group_id"]] = gt["client_id"]
+
+        # Get all client names
+        client_ids = list(set(group_id_to_client_id.values()))
+        clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
+        client_id_to_name = {}
+        if clients_response.data:
+            client_id_to_name = {client["id"]: client["name"] for client in clients_response.data}
 
         
         result = []
         for group in groups:
             group_id = group["id"]
             task_titles = [task_id_to_title.get(task_id, "") for task_id in group_id_to_task_ids.get(group_id, [])]
+            client_id = group_id_to_client_id.get(group_id)
+            client_name = client_id_to_name.get(client_id, "Unknown Client") if client_id else "Unknown Client"
             result.append({
+                "id": group_id,
                 "group_name": group["group_name"],
-                "tasks": task_titles
+                "tasks": task_titles,
+                "monthly_limit_hours": group.get("monthly_limit_hours", None),
+                "client_name": client_name,
             })
         return result
     except Exception as e:

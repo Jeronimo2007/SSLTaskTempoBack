@@ -40,7 +40,7 @@ class clientDelete(BaseModel):
 class TaskCreate(BaseModel):
     client_id: int
     title: str
-    billing_type: Literal["hourly", "percentage"]
+    billing_type: Literal["hourly", "percentage","fijo","mensual"]
     status: str
     area: Optional[str] = "Sin área"
     note: Optional[str] = None
@@ -48,6 +48,7 @@ class TaskCreate(BaseModel):
     due_date: Optional[datetime] = None
     permanent: bool = False
     monthly_limit_hours_tasks: int = 0
+    facturado: str = 'no'
 
 class TaskUpdate(BaseModel):
     id: int
@@ -55,10 +56,11 @@ class TaskUpdate(BaseModel):
     status: Optional[str] = None
     due_date: Optional[str] = None
     area: Optional[str] = None
-    billing_type: Optional[Literal["hourly", "percentage"]] = None
+    billing_type: Optional[Literal["hourly", "percentage","fijo","mensual"]] = None
     note: Optional[str] = None
     total_value: Optional[float] = None
     monthly_limit_hours_tasks: Optional[int] = None
+    facturado: Optional[Literal["si", "no", "parcialmente"]] = None
     
 
 
@@ -135,12 +137,15 @@ class ClientReportRequestTimeEntries(BaseModel):
 
 
 class TaskReportRequest(BaseModel):
-    value_per_set_hours: float
     start_date: datetime
     end_date: datetime
     task_id: int
 
-
+class GroupReportRequest(BaseModel):
+    value_per_set_hours: float
+    start_date: datetime
+    end_date: datetime
+    task_id: int
 
 class InvoiceByHoursRequest(BaseModel):
     client_id: int
