@@ -28,7 +28,7 @@ def create_client(data: clientCreate):
             'city': city,
             'address': address,
             'email': email,
-            'internacional': international,
+            'international': international,
             'type': type,
 
         }).execute()
