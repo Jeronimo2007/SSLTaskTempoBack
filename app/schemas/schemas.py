@@ -232,6 +232,7 @@ class TaskTimeEntriesRequest(BaseModel):
     start_date: datetime
     end_date: datetime
     facturado: Optional[Literal["si", "no", "parcialmente"]] = None
+    hour_package: Optional[float] = None
 
 
 

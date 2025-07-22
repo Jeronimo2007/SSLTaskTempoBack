@@ -693,11 +693,12 @@ async def get_task_time_entries(
     # Get time entries
     if request.facturado:
         entries_response = supabase.table("time_entries") \
-            .select("description, start_time, duration, facturado, user_id") \
+            .select("id,description, start_time, duration, facturado, user_id") \
             .gte("start_time", request.start_date.strftime("%Y-%m-%d")) \
             .lte("end_time", request.end_date.strftime("%Y-%m-%d")) \
             .eq("task_id", request.task_id) \
             .eq("facturado", request.facturado) \
+            .order("start_time", desc=False) \
             .execute()
     else:
         entries_response = supabase.table("time_entries") \
@@ -705,6 +706,7 @@ async def get_task_time_entries(
             .gte("start_time", request.start_date.strftime("%Y-%m-%d")) \
             .lte("end_time", request.end_date.strftime("%Y-%m-%d")) \
             .eq("task_id", request.task_id) \
+            .order("start_time", desc=False) \
             .execute()
         
     if not entries_response.data:
@@ -713,17 +715,19 @@ async def get_task_time_entries(
     # Get task info
     task_response = supabase.table("tasks").select("id, client_id, title, area").eq("id", request.task_id).execute()
     if not task_response.data:
-        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+        return []
     task_data = task_response.data[0]
 
     # Get client info
     client_response = supabase.table("clients").select("name").eq("id", task_data["client_id"]).execute()
     if not client_response.data:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        return []
     client_name = client_response.data[0]["name"]
 
     # Process entries
     result = []
+    hour_package = request.hour_package if hasattr(request, 'hour_package') and request.hour_package is not None else None
+    remaining_package = hour_package
     for entry in entries_response.data:
         # Get user info
         user_response = supabase.table("users").select("username, role, cost_per_hour_client").eq("id", entry["user_id"]).execute()
@@ -741,6 +745,20 @@ async def get_task_time_entries(
         minutos = int((tiempo_trabajado - horas) * 60)
         tiempo_formateado = f"{horas:02d}:{minutos:02d}"
 
+        # Handle hour_package logic
+        if remaining_package is not None and remaining_package > 0:
+            if tiempo_trabajado <= remaining_package:
+                # Entire entry is within the package
+                entry_total = 0
+                remaining_package -= tiempo_trabajado
+            else:
+                # Part of the entry is within the package, the rest is billable
+                excess_hours = tiempo_trabajado - remaining_package
+                entry_total = tarifa_horaria * excess_hours
+                remaining_package = 0
+        else:
+            entry_total = total
+
         result.append({
             "id": entry.get("id"),  
             "abogado": user_data["username"],
@@ -751,7 +769,7 @@ async def get_task_time_entries(
             "tiempo_trabajado": tiempo_formateado,
             "tarifa_horaria": tarifa_horaria,
             "moneda": "COP",
-            "total": total,
+            "total": entry_total,
             "facturado": entry["facturado"]
         })
 

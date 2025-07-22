@@ -134,11 +134,11 @@ def get_client_summary():
             response = supabase.table("group_permanent_summary").select("*").in_("client", active_client_ids).execute()
         except Exception as e:
             print(f"Error during query execution: {e}")
-            raise HTTPException(status_code=500, detail=f"Error al obtener el resumen de clientes: {str(e)}")
+            return []
 
         # Verifica si los datos están vacíos
         if not response.data:
-            raise HTTPException(status_code=404, detail="No se encontraron datos en el resumen de clientes")
+            return []
 
         # Devuelve los datos si todo está correcto
         return response.data
@@ -148,7 +148,7 @@ def get_client_summary():
         raise e
     except Exception as e:
         # Manejo genérico de errores
-        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+        return []
 
 
 @router.get("/get_clients_name")
