@@ -248,3 +248,15 @@ class GroupUpdate(BaseModel):
     tasks: Optional[List[int]] = None
     monthly_limit_hours: Optional[int] = None
     
+
+
+class PendienteCreate(BaseModel):
+    task_id: int
+    description: str
+
+
+class PendienteUpdate(BaseModel):
+    id: int
+    description: Optional[str] = None
+
+
