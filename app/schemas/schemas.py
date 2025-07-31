@@ -253,10 +253,12 @@ class GroupUpdate(BaseModel):
 class PendienteCreate(BaseModel):
     task_id: int
     description: str
+    status: str
+    nota: str
 
 
 class PendienteUpdate(BaseModel):
     id: int
     description: Optional[str] = None
-
-
+    status: Optional[str] = None
+    nota: Optional[str] = None

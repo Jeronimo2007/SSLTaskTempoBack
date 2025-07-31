@@ -15,7 +15,7 @@ async def create_pendiente(data: PendienteCreate):
     
     response = supabase.table("pendientes").insert(data.model_dump()).execute()
     if not response.data:
-        raise Exception(f"Error creating pendiente: {response.error.message}")
+        raise Exception(f"Error creating pendiente: {response}")
         return []
     
     return response.data
@@ -30,7 +30,7 @@ async def get_pendientes():
     response = supabase.table("pendientes").select("*").execute()
     
     if not response.data:
-        raise Exception(f"Error fetching pendientes: {response.error.message}")
+        return []
     
     
     return response.data
@@ -45,18 +45,18 @@ async def update_pendiente(data: PendienteUpdate):
     response = supabase.table("pendientes").update(data.model_dump(exclude_unset=True)).eq("id", data.id).execute()
     
     if not response.data:
-        raise Exception(f"Error updating pendiente: {response.error.message}")
+        raise Exception(f"Error updating pendiente: {response}")
     
     return response.data
 
 
-@router.delete('/delete_pendiente')
+@router.delete('/delete_pendiente/{id}')
 async def delete_pendiente(id: int):
     """ Delete a pendiente """
     
     response = supabase.table("pendientes").delete().eq("id", id).execute()
     
     if not response.data:
-        raise Exception(f"Error deleting pendiente: {response.error.message}")
+        raise Exception(f"Error deleting pendiente: {response}")
     
     return {"message": "Pendiente deleted successfully"}
