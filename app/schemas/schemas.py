@@ -40,7 +40,7 @@ class clientDelete(BaseModel):
 class TaskCreate(BaseModel):
     client_id: int
     title: str
-    billing_type: Literal["hourly", "percentage","fijo","mensual"]
+    billing_type: str
     status: str
     area: Optional[str] = "Sin área"
     note: Optional[str] = None
@@ -49,6 +49,7 @@ class TaskCreate(BaseModel):
     permanent: bool = False
     monthly_limit_hours_tasks: int = 0
     facturado: str = 'no'
+    asesoria_tarif: Optional[float] = None
 
 class TaskUpdate(BaseModel):
     id: int
@@ -56,12 +57,12 @@ class TaskUpdate(BaseModel):
     status: Optional[str] = None
     due_date: Optional[str] = None
     area: Optional[str] = None
-    billing_type: Optional[Literal["hourly", "percentage","fijo","mensual"]] = None
+    billing_type: Optional[str] = None
     note: Optional[str] = None
     total_value: Optional[float] = None
     monthly_limit_hours_tasks: Optional[int] = None
     facturado: Optional[Literal["si", "no", "parcialmente"]] = None
-    
+    asesoria_tarif: Optional[float] = None
 
 
 class TaskResponse(BaseModel):
