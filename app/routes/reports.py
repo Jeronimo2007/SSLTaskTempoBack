@@ -47,7 +47,7 @@ async def get_hours_by_client(
         .execute()
 
     if not response.data:
-        raise HTTPException(status_code=404, detail="No hay datos en el rango de fechas seleccionado")
+        return []
    
     task_response = supabase.table("tasks").select("id, client_id, title").execute()
     task_dict = {task["id"]: {"client_id": task["client_id"], "title": task["title"]} for task in task_response.data}
@@ -726,8 +726,6 @@ async def get_task_time_entries(
 
     # Process entries
     result = []
-    hour_package = request.hour_package if hasattr(request, 'hour_package') and request.hour_package is not None else None
-    remaining_package = hour_package
     for entry in entries_response.data:
         # Get user info
         user_response = supabase.table("users").select("username, role, cost_per_hour_client").eq("id", entry["user_id"]).execute()
@@ -745,20 +743,6 @@ async def get_task_time_entries(
         minutos = int((tiempo_trabajado - horas) * 60)
         tiempo_formateado = f"{horas:02d}:{minutos:02d}"
 
-        # Handle hour_package logic
-        if remaining_package is not None and remaining_package > 0:
-            if tiempo_trabajado <= remaining_package:
-                # Entire entry is within the package
-                entry_total = 0
-                remaining_package -= tiempo_trabajado
-            else:
-                # Part of the entry is within the package, the rest is billable
-                excess_hours = tiempo_trabajado - remaining_package
-                entry_total = tarifa_horaria * excess_hours
-                remaining_package = 0
-        else:
-            entry_total = total
-
         result.append({
             "id": entry.get("id"),  
             "abogado": user_data["username"],
@@ -769,7 +753,7 @@ async def get_task_time_entries(
             "tiempo_trabajado": tiempo_formateado,
             "tarifa_horaria": tarifa_horaria,
             "moneda": "COP",
-            "total": entry_total,
+            "total": total,
             "facturado": entry["facturado"]
         })
 

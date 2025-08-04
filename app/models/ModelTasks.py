@@ -20,14 +20,7 @@ def create_task(task_data: TaskCreate):
 
     task_dict = task_data.dict()
     
-    if isinstance(task_dict.get("due_date"), str):
-        try:
-            task_dict["due_date"] = datetime.fromisoformat(task_dict["due_date"])
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Formato de fecha inválido. Usa ISO 8601 (YYYY-MM-DDTHH:MM:SS).")
 
-    if "due_date" in task_dict:
-        task_dict["due_date"] = format_datetime(task_dict["due_date"])
     
     response = supabase.table("tasks").insert(task_dict).execute()
 
@@ -44,7 +37,7 @@ def get_all_tasks_by_client(client_id: int):
     """get all task from de client id"""
 
     response = supabase.table("tasks").select(
-        "id, title, status, due_date, client_id, clients!inner(name, active), area"
+        "id, title, client_id, clients!inner(name, active), area"
     ).eq("client_id", client_id).eq('clients.active', True).execute()
 
 
@@ -55,9 +48,7 @@ def get_all_tasks_by_client(client_id: int):
     tasks = [
         {
             "id": task["id"],
-            "title": task["title"],
-            "status": task["status"],
-            "due_date": task["due_date"],
+            "title": task["title"], 
             "client": task["clients"]["name"] if task["clients"] else "Sin Cliente",
             "area": task.get("area"),
             "billing_type": task.get("billing_type"),
@@ -81,14 +72,14 @@ def get_all_tasks(user_id: int = None):
 
             # Filter tasks based on the retrieved client IDs and active clients
             response = supabase.table("tasks").select(
-                "id, title, status, due_date, client_id, clients!inner(name, active), area, total_billed, total_value, billing_type, note, permanent, monthly_limit_hours_tasks, assignment_date,facturado,asesoria_tarif"
+                "id, title, client_id, clients!inner(name, active), area, total_billed, total_value, billing_type, note, permanent, monthly_limit_hours_tasks, assignment_date,facturado,asesoria_tarif"
             ).in_('client_id', client_ids).eq('clients.active', True).execute()
         else:
             return []
     else:
         # Get all tasks from active clients
         response = supabase.table("tasks").select(
-            "id, title, status, due_date, note, client_id, clients!inner(name, active), area, total_billed,total_value,billing_type, permanent, monthly_limit_hours_tasks,assignment_date,facturado,asesoria_tarif"
+            "id, title, note, client_id, clients!inner(name, active), area, total_billed,total_value,billing_type, permanent, monthly_limit_hours_tasks,assignment_date,facturado,asesoria_tarif"
         ).eq('clients.active', True).execute()
 
     if not response.data:
@@ -98,8 +89,6 @@ def get_all_tasks(user_id: int = None):
         {
             "id": task["id"],
             "title": task["title"],
-            "status": task["status"],
-            "due_date": task["due_date"],
             "assignment_date": task["assignment_date"],
             "client": task["clients"]["name"] if task["clients"] else "Sin Cliente",
             "area": task.get("area"),
@@ -138,15 +127,8 @@ def update_task(task_data: TaskUpdate):
     task_dict = task_data.dict(exclude_unset=True)
 
     
-    if isinstance(task_dict.get("due_date"), str):
-        try:
-            task_dict["due_date"] = datetime.fromisoformat(task_dict["due_date"])
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Formato de fecha inválido. Usa ISO 8601 (YYYY-MM-DDTHH:MM:SS).")
+    
 
-   
-    if "due_date" in task_dict:
-        task_dict["due_date"] = format_datetime(task_dict["due_date"])
 
     response = supabase.table("tasks").update(task_dict).eq("id", task_id).execute()
 

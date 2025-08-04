@@ -9,7 +9,8 @@ def create_client(data: clientCreate):
         name = data.name
         permanent = data.permanent
         lawyers = data.lawyers
-        nit = data.nit
+        identification = data.identification
+        id_type = data.id_type
         phone = data.phone
         city = data.city
         address = data.address
@@ -23,7 +24,8 @@ def create_client(data: clientCreate):
         response = supabase.table('clients').insert({
             'name': name,
             'permanent': permanent,
-            'nit': nit,
+            'identification': identification,
+            'id_type': id_type,
             'phone': phone,
             'city': city,
             'address': address,
@@ -105,7 +107,8 @@ def update_client(data: clientUpdate):
     lawyers = data.lawyers
     permanent = data.permanent
     
-    nit = data.nit
+    identification = data.identification
+    id_type = data.id_type
     phone = data.phone
     city = data.city
     address = data.address
@@ -129,8 +132,11 @@ def update_client(data: clientUpdate):
     if international is not None:
         update_data['international'] = international
 
-    if nit is not None:
-        update_data['nit'] = nit
+    if identification is not None:
+        update_data['identification'] = identification
+
+    if id_type is not None:
+        update_data['id_type'] = id_type
 
     if phone is not None:
         update_data['phone'] = phone

@@ -7,13 +7,14 @@ class clientCreate(BaseModel):
     name: str
     permanent: bool
     lawyers: list[int]
-    nit: str
+    identification: str
     phone: str
     city: str
     address: str
     email: str
     international : bool
     type: Literal['natural','juridica'] = 'natural'  # Default to 'natural'
+    id_type: Literal['nit','cc','tax_id'] = 'nit'
 
 
 class clientUpdate(BaseModel):
@@ -21,13 +22,14 @@ class clientUpdate(BaseModel):
     name: Optional[str] = None
     lawyers: Optional[list[int]] = None 
     permanent: Optional[bool] = None
-    nit: str
+    identification: Optional[str] = None
     phone: str
     city: str
     address: str
     email: str
     international: Optional[bool] = None
     type: Optional[Literal['natural', 'juridica']] = None  # Default to 'natural' if not provided
+    id_type: Optional[Literal['nit','cc','tax_id']] = None
 
 
 
@@ -41,11 +43,9 @@ class TaskCreate(BaseModel):
     client_id: int
     title: str
     billing_type: str
-    status: str
     area: Optional[str] = "Sin área"
     note: Optional[str] = None
     total_value: Optional[float] = Field(default=None, description="Requerido si billing_type es 'percentage'")
-    due_date: Optional[datetime] = None
     permanent: bool = False
     monthly_limit_hours_tasks: int = 0
     facturado: str = 'no'
@@ -54,8 +54,6 @@ class TaskCreate(BaseModel):
 class TaskUpdate(BaseModel):
     id: int
     title: Optional[str] = None
-    status: Optional[str] = None
-    due_date: Optional[str] = None
     area: Optional[str] = None
     billing_type: Optional[str] = None
     note: Optional[str] = None
@@ -256,6 +254,7 @@ class PendienteCreate(BaseModel):
     description: str
     status: str
     nota: str
+    due_date: datetime
 
 
 class PendienteUpdate(BaseModel):
@@ -263,3 +262,4 @@ class PendienteUpdate(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None
     nota: Optional[str] = None
+    due_date: Optional[datetime] = None
