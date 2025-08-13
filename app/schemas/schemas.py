@@ -232,7 +232,12 @@ class TaskTimeEntriesRequest(BaseModel):
     end_date: datetime
     facturado: Optional[Literal["si", "no", "parcialmente"]] = None
     hour_package: Optional[float] = None
+    exchange_rate: Optional[float] = Field(default=4000, description="Exchange rate for COP to USD conversion (default: 4000)")
 
+
+class ClientTasksBillingRequest(BaseModel):
+    client_id: int
+    package_hours: Optional[float] = None
 
 
 class GroupCreate(BaseModel):

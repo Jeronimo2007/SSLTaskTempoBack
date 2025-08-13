@@ -5,10 +5,10 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.security import OAuth2PasswordBearer
 import openpyxl
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from app.database.data import supabase
-from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest, TaskReportRequest, TaskTimeEntriesRequest
+from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, ClientTasksBillingRequest, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest, TaskReportRequest, TaskTimeEntriesRequest
 from app.services.utils import role_required
 import pandas as pd
 import io
@@ -758,6 +758,253 @@ async def get_task_time_entries(
         })
 
     return result
+
+
+@router.post("/task_time_entries_summary")
+async def get_task_time_entries_summary(
+    request: TaskTimeEntriesRequest,
+    user: dict = Depends(role_required(["socio", "senior"]))
+):
+    """Get a summary of time entries for a specific task with user rates and totals"""
+    
+    # Get time entries
+    if request.facturado:
+        entries_response = supabase.table("time_entries") \
+            .select("id, description, start_time, duration, facturado, user_id") \
+            .gte("start_time", request.start_date.strftime("%Y-%m-%d")) \
+            .lte("end_time", request.end_date.strftime("%Y-%m-%d")) \
+            .eq("task_id", request.task_id) \
+            .eq("facturado", request.facturado) \
+            .order("start_time", desc=False) \
+            .execute()
+    else:
+        entries_response = supabase.table("time_entries") \
+            .select("id, description, start_time, duration, facturado, user_id") \
+            .gte("start_time", request.start_date.strftime("%Y-%m-%d")) \
+            .lte("end_time", request.end_date.strftime("%Y-%m-%d")) \
+            .eq("task_id", request.task_id) \
+            .order("start_time", desc=False) \
+            .execute()
+        
+    if not entries_response.data:
+        return []
+
+    # Get task info including coin
+    task_response = supabase.table("tasks").select("id, client_id, title, area, coin").eq("id", request.task_id).execute()
+    if not task_response.data:
+        return []
+    task_data = task_response.data[0]
+
+    # Get client info
+    client_response = supabase.table("clients").select("name").eq("id", task_data["client_id"]).execute()
+    if not client_response.data:
+        return []
+    client_name = client_response.data[0]["name"]
+
+    # Get unique user IDs from entries
+    user_ids = list(set([entry["user_id"] for entry in entries_response.data]))
+    
+    # Get user info with rates (only COP rates exist)
+    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", user_ids).execute()
+    if not users_response.data:
+        return []
+    
+    user_dict = {user["id"]: user for user in users_response.data}
+
+    # Process entries and group by user
+    user_summary = {}
+    for entry in entries_response.data:
+        user_id = entry["user_id"]
+        user_data = user_dict.get(user_id)
+        
+        if not user_data:
+            continue
+            
+        tiempo_trabajado = round(entry.get("duration", 0) or 0, 2)
+        
+        # Get the COP rate and convert to USD if needed
+        tarifa_cop = user_data.get("cost_per_hour_client", 0)
+        task_coin = task_data.get("coin", "COP")
+        
+        if task_coin == "USD":
+            # Convert COP to USD using exchange rate from request
+            exchange_rate = request.exchange_rate or 4000  # Use request exchange rate or default
+            tarifa_horaria = round(tarifa_cop / exchange_rate, 2)
+            moneda = "USD"
+        else:
+            tarifa_horaria = tarifa_cop
+            moneda = "COP"
+        
+        total = round(tarifa_horaria * tiempo_trabajado, 2)
+        
+        if user_id not in user_summary:
+            user_summary[user_id] = {
+                "username": user_data["username"],
+                "role": user_data["role"],
+                "tiempo_trabajado": 0,
+                "tarifa_horaria": tarifa_horaria,
+                "moneda": moneda,
+                "total": 0
+            }
+        
+        user_summary[user_id]["tiempo_trabajado"] += tiempo_trabajado
+        user_summary[user_id]["total"] += total
+
+    # Convert to list and round totals
+    result = []
+    for user_data in user_summary.values():
+        result.append({
+            "username": user_data["username"],
+            "role": user_data["role"],
+            "tiempo_trabajado": round(user_data["tiempo_trabajado"], 2),
+            "tarifa_horaria": round(user_data["tarifa_horaria"], 2),
+            "moneda": user_data["moneda"],
+            "total": round(user_data["total"], 2)
+        })
+
+    return result
+
+@router.post("/client_tasks_billing")
+async def get_client_tasks_billing(
+    request: ClientTasksBillingRequest,
+    user: dict = Depends(role_required(["socio", "senior"]))
+):
+    """Get all tasks for a client with billing details, package hours calculations, and additional charges"""
+    
+    # Get all tasks for the client
+    tasks_response = supabase.table("tasks") \
+        .select("id, title, billing_type, area, coin, asesoria_tarif, total_value, permanent, monthly_limit_hours_tasks") \
+        .eq("client_id", request.client_id) \
+        .execute()
+    
+    if not tasks_response.data:
+        return []
+    
+    tasks = tasks_response.data
+    result = []
+    
+    for task in tasks:
+        task_id = task["id"]
+        
+        # Get time entries for this task
+        time_entries_response = supabase.table("time_entries") \
+            .select("duration, user_id") \
+            .eq("task_id", task_id) \
+            .execute()
+        
+        total_time = 0
+        total_generated = 0
+        
+        if time_entries_response.data:
+            # Get user rates for this task
+            user_ids = list(set([entry["user_id"] for entry in time_entries_response.data]))
+            users_response = supabase.table("users").select("id, cost_per_hour_client").in_("id", user_ids).execute()
+            
+            if users_response.data:
+                user_dict = {user["id"]: user for user in users_response.data}
+                
+                # Calculate totals
+                for entry in time_entries_response.data:
+                    duration = entry.get("duration", 0) or 0
+                    total_time += duration
+                    
+                    user_rate = user_dict.get(entry["user_id"], {}).get("cost_per_hour_client", 0)
+                    
+                    # Convert to USD if task currency is USD (using default exchange rate)
+                    if task.get("coin") == "USD":
+                        exchange_rate = 4000  # Default exchange rate
+                        user_rate = user_rate / exchange_rate
+                    
+                    total_generated += duration * user_rate
+        
+        # Round totals
+        total_time = round(total_time, 2)
+        total_generated = round(total_generated, 2)
+        
+        # Prepare task data
+        task_data = {
+            "id": task_id,
+            "title": task["title"],
+            "billing_type": task["billing_type"],
+            "area": task.get("area"),
+            "coin": task.get("coin", "COP"),
+            "total_time": total_time,
+            "total_generated": total_generated,
+            "permanent": task.get("permanent", False)
+        }
+        
+        # Add billing-specific fields
+        if task["billing_type"] == "tarifa_fija":
+            task_data["asesoria_tarif"] = task.get("asesoria_tarif", 0)
+            task_data["total_value"] = task.get("total_value", 0)
+        elif task["billing_type"] == "mensual":
+            task_data["asesoria_tarif"] = task.get("asesoria_tarif", 0)
+            task_data["monthly_limit_hours"] = task.get("monthly_limit_hours_tasks", 0)
+        
+        # Handle package hours logic for permanent tasks
+        if request.package_hours and request.package_hours > 0 and task.get("permanent", False):
+            asesoria_tarif = task.get("asesoria_tarif", 0) or 0  # Convert None to 0
+            
+            if total_time <= request.package_hours:
+                # Within package hours - total is the asesoria_tarif
+                task_data["package_total"] = asesoria_tarif
+                task_data["additional_total"] = 0
+                task_data["final_total"] = asesoria_tarif
+            else:
+                # Exceeds package hours - calculate additional charges
+                task_data["package_total"] = asesoria_tarif
+                additional_hours = total_time - request.package_hours
+                
+                # Calculate additional charge based on remaining time
+                additional_total = 0
+                if time_entries_response.data and users_response.data:
+                    # Get entries that exceed package hours
+                    remaining_entries = []
+                    current_time = 0
+                    
+                    for entry in sorted(time_entries_response.data, key=lambda x: x.get("start_time", "")):
+                        duration = entry.get("duration", 0) or 0
+                        if current_time + duration <= request.package_hours:
+                            current_time += duration
+                        else:
+                            # This entry exceeds package hours
+                            if current_time < request.package_hours:
+                                # Partial entry - only charge the excess
+                                excess_duration = (current_time + duration) - request.package_hours
+                                remaining_entries.append({
+                                    "duration": excess_duration,
+                                    "user_id": entry["user_id"]
+                                })
+                            else:
+                                # Full entry is additional
+                                remaining_entries.append(entry)
+                    
+                    # Calculate additional charges
+                    for entry in remaining_entries:
+                        user_rate = user_dict.get(entry["user_id"], {}).get("cost_per_hour_client", 0)
+                        if task.get("coin") == "USD":
+                            exchange_rate = 4000
+                            user_rate = user_rate / exchange_rate
+                        additional_total += entry["duration"] * user_rate
+                
+                task_data["additional_total"] = round(additional_total, 2)
+                task_data["final_total"] = round(asesoria_tarif + additional_total, 2)
+        else:
+            # No package hours or not permanent task
+            task_data["package_total"] = 0
+            task_data["additional_total"] = 0
+            task_data["final_total"] = total_generated
+        
+        result.append(task_data)
+    
+    return result
+
+
+
+
+
+
+
 
 @router.post("/invoices/by-hours")
 def generate_invoice_by_hours(req: InvoiceByHoursRequest):
