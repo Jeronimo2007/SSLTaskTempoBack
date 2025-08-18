@@ -128,7 +128,7 @@ def get_client_summary():
         try:
             active_clients = supabase.table("clients").select("name").filter("active", "eq", True).execute()
             active_client_ids = [client["name"] for client in active_clients.data]
-            response = supabase.table("group_permanent_summary").select("*").in_("client", active_client_ids).execute()
+            response = supabase.table("task_permanent_summary").select("*").in_("client", active_client_ids).execute()
         except Exception as e:
             print(f"Error during query execution: {e}")
             return []

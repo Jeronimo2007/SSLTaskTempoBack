@@ -50,6 +50,7 @@ class TaskCreate(BaseModel):
     monthly_limit_hours_tasks: int = 0
     facturado: str = 'no'
     asesoria_tarif: Optional[float] = None
+    coin: Optional[str] = None
 
 class TaskUpdate(BaseModel):
     id: int
@@ -61,6 +62,7 @@ class TaskUpdate(BaseModel):
     monthly_limit_hours_tasks: Optional[int] = None
     facturado: Optional[Literal["si", "no", "parcialmente"]] = None
     asesoria_tarif: Optional[float] = None
+    coin: Optional[str] = None
 
 
 class TaskResponse(BaseModel):

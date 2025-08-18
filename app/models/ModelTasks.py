@@ -72,14 +72,14 @@ def get_all_tasks(user_id: int = None):
 
             # Filter tasks based on the retrieved client IDs and active clients
             response = supabase.table("tasks").select(
-                "id, title, client_id, clients!inner(name, active), area, total_billed, total_value, billing_type, note, permanent, monthly_limit_hours_tasks, assignment_date,facturado,asesoria_tarif"
+                "id, title, client_id, clients!inner(name, active), area, total_billed, total_value, billing_type, note, permanent, monthly_limit_hours_tasks, assignment_date,facturado,asesoria_tarif,coin"
             ).in_('client_id', client_ids).eq('clients.active', True).execute()
         else:
             return []
     else:
         # Get all tasks from active clients
         response = supabase.table("tasks").select(
-            "id, title, note, client_id, clients!inner(name, active), area, total_billed,total_value,billing_type, permanent, monthly_limit_hours_tasks,assignment_date,facturado,asesoria_tarif"
+            "id, title, note, client_id, clients!inner(name, active), area, total_billed,total_value,billing_type, permanent, monthly_limit_hours_tasks,assignment_date,facturado,asesoria_tarif,coin"
         ).eq('clients.active', True).execute()
 
     if not response.data:
@@ -99,7 +99,8 @@ def get_all_tasks(user_id: int = None):
             "permanent": task.get("permanent"),
             "monthly_limit_hours_tasks": task.get("monthly_limit_hours_tasks"),
             "facturado": task.get("facturado"),
-            "asesoria_tarif": task.get("asesoria_tarif")
+            "asesoria_tarif": task.get("asesoria_tarif"),
+            "coin": task.get("coin")
         }
         for task in response.data
     ]
