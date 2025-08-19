@@ -51,6 +51,7 @@ class TaskCreate(BaseModel):
     facturado: str = 'no'
     asesoria_tarif: Optional[float] = None
     coin: Optional[str] = None
+    assigned_user_name: str
 
 class TaskUpdate(BaseModel):
     id: int
@@ -63,7 +64,7 @@ class TaskUpdate(BaseModel):
     facturado: Optional[Literal["si", "no", "parcialmente"]] = None
     asesoria_tarif: Optional[float] = None
     coin: Optional[str] = None
-
+    assigned_user_name: Optional[str] = None
 
 class TaskResponse(BaseModel):
     id: int

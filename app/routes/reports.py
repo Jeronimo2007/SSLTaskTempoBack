@@ -1420,7 +1420,7 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
     # Build query for time entries - show all time entries regardless of billing type
     query = supabase.table("time_entries").select("""
         id, duration, start_time, end_time, description, user_id, facturado,
-        tasks!inner(id, title, client_id, area, billing_type, facturado)
+        tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name)
     """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat())
     
     # Only filter by client if client_id is provided
@@ -1468,7 +1468,8 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
             "Fecha de reporte": entry.get("start_time", "")[:10] if entry.get("start_time") else "",
             "Tarifa del abogado": f"{rate:,.2f}",
             "Total Tarifa x Tiempo": f"{total:,.2f}",
-            "Estado": entry.get("facturado", "")
+            "Estado": entry.get("facturado", ""),
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
     return _create_comprehensive_excel_file(excel_data, "Reporte_General", start_date, end_date)
@@ -1479,7 +1480,7 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
     
     # Build query for fixed rate tasks - show all tasks with this billing type
     query = supabase.table("tasks").select("""
-        id, title, created_at, billing_type, total_value, facturado, note, assigned_to_id, client_id
+        id, title, created_at, billing_type, total_value, facturado, note, assigned_user_name, client_id
     """).eq("billing_type", "tarifa_fija")
     
     # Only filter by client if client_id is provided
@@ -1491,21 +1492,15 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
     if not response.data:
         raise HTTPException(status_code=404, detail="No se encontraron tareas con tarifa fija")
     
-    # Get client and user information
+    # Get client information
     client_ids = list(set([task.get("client_id") for task in response.data if task.get("client_id")]))
-    user_ids = list(set([task.get("assigned_to_id") for task in response.data if task.get("assigned_to_id")]))
-    
     clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
-    users_response = supabase.table("users").select("id, username").in_("id", user_ids).execute()
-    
     client_dict = {client["id"]: client["name"] for client in clients_response.data} if clients_response.data else {}
-    user_dict = {user["id"]: user["username"] for user in users_response.data} if users_response.data else {}
     
     # Prepare Excel data
     excel_data = []
     for task in response.data:
         client_name = client_dict.get(task.get("client_id"), "")
-        assigned_username = user_dict.get(task.get("assigned_to_id"), "")
         
         excel_data.append({
             "Cliente": client_name,
@@ -1514,7 +1509,8 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
             "Tipo de facturación": task.get("billing_type", ""),
             "Tarifa tarifa fija": f"{task.get('total_value', 0) or 0:,.2f}",
             "Estado": task.get("facturado", ""),
-            "Nota": task.get("note", "")
+            "Nota": task.get("note", ""),
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
     return _create_comprehensive_excel_file(excel_data, "Reporte_Tarifa_Fija", start_date, end_date)
@@ -1525,7 +1521,7 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
     
     # Build query for monthly subscription tasks - show all tasks with this billing type
     query = supabase.table("tasks").select("""
-        id, title, area, billing_type, monthly_limit_hours_tasks, asesoria_tarif, facturado, client_id
+        id, title, area, billing_type, monthly_limit_hours_tasks, asesoria_tarif, facturado, client_id, assigned_user_name
     """).eq("billing_type", "fija")
     
     # Only filter by client if client_id is provided
@@ -1590,7 +1586,8 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
             "Límite de horas mensuales": task.get("monthly_limit_hours_tasks", 0) or 0,
             "Tarifa tarifa de mensual": f"{monthly_rate:,.2f}",
             "Diferencia Tarifa mensual - valor trabajado": f"{difference:,.2f}",
-            "Estado": task.get("facturado", "")
+            "Estado": task.get("facturado", ""),
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
     return _create_comprehensive_excel_file(excel_data, "Reporte_Mensualidad", start_date, end_date, 
@@ -1603,7 +1600,7 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
     # Build query for time entries from hourly billing tasks
     query = supabase.table("time_entries").select("""
         id, duration, start_time, end_time, description, user_id, facturado,
-        tasks!inner(id, title, client_id, area, billing_type, facturado)
+        tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name)
     """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat()).eq("tasks.billing_type", "hourly")
     
     if client_id:
@@ -1650,7 +1647,8 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
             "Fecha de reporte": entry.get("start_time", "")[:10] if entry.get("start_time") else "",
             "Tarifa del abogado": f"{rate:,.2f}",
             "Total Tarifa x Tiempo": f"{total:,.2f}",
-            "Estado": entry.get("facturado", "")
+            "Estado": entry.get("facturado", ""),
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
     return _create_comprehensive_excel_file(excel_data, "Reporte_Hourly", start_date, end_date)
