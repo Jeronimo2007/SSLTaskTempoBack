@@ -170,6 +170,14 @@ class InvoiceFilterRequest(BaseModel):
     end_date: str
 
 
+class ComprehensiveReportRequest(BaseModel):
+    """Request model for comprehensive reports (General, Tarifa Fija, Mensualidad, Hourly)"""
+    report_type: Literal["general", "tarifa_fija", "mensualidad", "hourly"]
+    start_date: Optional[datetime] = None  # Defaults to current month
+    end_date: Optional[datetime] = None    # Defaults to current month
+    client_id: Optional[int] = None        # Defaults to all clients
+
+
 class EventCreate(BaseModel):
     title: str
     description: Optional[str] = None

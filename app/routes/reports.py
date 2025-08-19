@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 from app.database.data import supabase
-from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, ClientTasksBillingRequest, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest, TaskReportRequest, TaskTimeEntriesRequest
+from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, ClientTasksBillingRequest, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest, TaskReportRequest, TaskTimeEntriesRequest, ComprehensiveReportRequest
 from app.services.utils import role_required
 import pandas as pd
 import io
@@ -1368,6 +1368,386 @@ async def get_invoice_registry_excel(
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
+
+@router.post("/comprehensive_report")
+async def generate_comprehensive_report(
+    request: ComprehensiveReportRequest,
+    user: dict = Depends(role_required(["socio", "senior", "consultor"]))
+):
+    """
+    Generate comprehensive reports based on type:
+    - general: Complete time tracking report with lawyer rates (includes all billing types)
+    - tarifa_fija: Fixed rate clients report
+    - mensualidad: Monthly subscription clients report
+    - hourly: Hourly billing tasks report
+    """
+    try:
+        from datetime import datetime, date
+        import calendar
+        
+        # Set default dates to current month if not provided
+        if not request.start_date or not request.end_date:
+            today = date.today()
+            first_day = date(today.year, today.month, 1)
+            last_day = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+            start_date = datetime.combine(first_day, datetime.min.time())
+            end_date = datetime.combine(last_day, datetime.max.time())
+        else:
+            start_date = request.start_date
+            end_date = request.end_date
+
+        if request.report_type == "general":
+            return await _generate_general_report(start_date, end_date, request.client_id)
+        elif request.report_type == "tarifa_fija":
+            return await _generate_fixed_rate_report(start_date, end_date, request.client_id)
+        elif request.report_type == "mensualidad":
+            return await _generate_monthly_report(start_date, end_date, request.client_id)
+        elif request.report_type == "hourly":
+            return await _generate_hourly_report(start_date, end_date, request.client_id)
+        else:
+            raise HTTPException(status_code=400, detail="Tipo de reporte no válido")
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
+
+async def _generate_general_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
+    """Generate the general report with time tracking and lawyer rates"""
+    
+    # Build query for time entries - show all time entries regardless of billing type
+    query = supabase.table("time_entries").select("""
+        id, duration, start_time, end_time, description, user_id, facturado,
+        tasks!inner(id, title, client_id, area, billing_type, facturado)
+    """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat())
+    
+    # Only filter by client if client_id is provided
+    if client_id:
+        query = query.eq("tasks.client_id", client_id)
+    
+    response = query.execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="No se encontraron registros de tiempo para el período especificado")
+    
+    # Get client and user information
+    client_ids = list(set([entry.get("tasks", {}).get("client_id") for entry in response.data if entry.get("tasks", {}).get("client_id")]))
+    user_ids = list(set([entry.get("user_id") for entry in response.data if entry.get("user_id")]))
+    
+    clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
+    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", user_ids).execute()
+    
+    client_dict = {client["id"]: client["name"] for client in clients_response.data} if clients_response.data else {}
+    user_dict = {user["id"]: {"username": user["username"], "role": user.get("role", ""), "rate": user.get("cost_per_hour_client", 0)} for user in users_response.data} if users_response.data else {}
+    
+    # Prepare Excel data
+    excel_data = []
+    for entry in response.data:
+        task = entry.get("tasks", {})
+        user_id = entry.get("user_id")
+        user_info = user_dict.get(user_id, {}) if user_id else {}
+        client_id = task.get("client_id")
+        client_name = client_dict.get(client_id, "")
+        
+        # Calculate total (rate x time)
+        rate = user_info.get("rate", 0) or 0
+        duration = entry.get("duration", 0) or 0
+        total = rate * duration
+        
+        excel_data.append({
+            "Abogado": user_info.get("username", ""),
+            "Rol": user_info.get("role", ""),
+            "Nombre del Cliente": client_name,
+            "Asunto": task.get("title", ""),
+            "Descripción": entry.get("description", ""),
+            "Área": task.get("area", ""),
+            "Tipo de facturación": task.get("billing_type", ""),
+            "Tiempo reportado": f"{duration:.2f}",
+            "Fecha de reporte": entry.get("start_time", "")[:10] if entry.get("start_time") else "",
+            "Tarifa del abogado": f"{rate:,.2f}",
+            "Total Tarifa x Tiempo": f"{total:,.2f}",
+            "Estado": entry.get("facturado", "")
+        })
+    
+    return _create_comprehensive_excel_file(excel_data, "Reporte_General", start_date, end_date)
+
+
+async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
+    """Generate the fixed rate clients report"""
+    
+    # Build query for fixed rate tasks - show all tasks with this billing type
+    query = supabase.table("tasks").select("""
+        id, title, created_at, billing_type, total_value, facturado, note, assigned_to_id, client_id
+    """).eq("billing_type", "tarifa_fija")
+    
+    # Only filter by client if client_id is provided
+    if client_id:
+        query = query.eq("client_id", client_id)
+    
+    response = query.execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="No se encontraron tareas con tarifa fija")
+    
+    # Get client and user information
+    client_ids = list(set([task.get("client_id") for task in response.data if task.get("client_id")]))
+    user_ids = list(set([task.get("assigned_to_id") for task in response.data if task.get("assigned_to_id")]))
+    
+    clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
+    users_response = supabase.table("users").select("id, username").in_("id", user_ids).execute()
+    
+    client_dict = {client["id"]: client["name"] for client in clients_response.data} if clients_response.data else {}
+    user_dict = {user["id"]: user["username"] for user in users_response.data} if users_response.data else {}
+    
+    # Prepare Excel data
+    excel_data = []
+    for task in response.data:
+        client_name = client_dict.get(task.get("client_id"), "")
+        assigned_username = user_dict.get(task.get("assigned_to_id"), "")
+        
+        excel_data.append({
+            "Cliente": client_name,
+            "Asunto": task.get("title", ""),
+            "Fecha de creación": task.get("created_at", "")[:10] if task.get("created_at") else "",
+            "Tipo de facturación": task.get("billing_type", ""),
+            "Tarifa tarifa fija": f"{task.get('total_value', 0) or 0:,.2f}",
+            "Estado": task.get("facturado", ""),
+            "Nota": task.get("note", "")
+        })
+    
+    return _create_comprehensive_excel_file(excel_data, "Reporte_Tarifa_Fija", start_date, end_date)
+
+
+async def _generate_monthly_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
+    """Generate the monthly subscription clients report"""
+    
+    # Build query for monthly subscription tasks - show all tasks with this billing type
+    query = supabase.table("tasks").select("""
+        id, title, area, billing_type, monthly_limit_hours_tasks, asesoria_tarif, facturado, client_id
+    """).eq("billing_type", "fija")
+    
+    # Only filter by client if client_id is provided
+    if client_id:
+        query = query.eq("client_id", client_id)
+    
+    response = query.execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="No se encontraron tareas con mensualidad (billing_type: fija)")
+    
+    # Get client information
+    client_ids = list(set([task.get("client_id") for task in response.data if task.get("client_id")]))
+    clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
+    client_dict = {client["id"]: client["name"] for client in clients_response.data} if clients_response.data else {}
+    
+    # Get time entries for these tasks in the date range with user information
+    task_ids = [task["id"] for task in response.data]
+    time_response = supabase.table("time_entries").select("""
+        task_id, duration, user_id
+    """).in_("task_id", task_ids).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat()).execute()
+    
+    # Get user rates for all users who worked on these tasks
+    user_ids = list(set([entry.get("user_id") for entry in time_response.data if entry.get("user_id")]))
+    users_response = supabase.table("users").select("id, cost_per_hour_client").in_("id", user_ids).execute()
+    user_dict = {user["id"]: user.get("cost_per_hour_client", 0) for user in users_response.data} if users_response.data else {}
+    
+    # Calculate total time and worked value per task
+    task_time = {}
+    task_worked_value = {}
+    for entry in time_response.data:
+        task_id = entry["task_id"]
+        duration = entry.get("duration", 0) or 0
+        user_id = entry.get("user_id")
+        user_rate = user_dict.get(user_id, 0) or 0
+        
+        if task_id not in task_time:
+            task_time[task_id] = 0
+            task_worked_value[task_id] = 0
+        
+        task_time[task_id] += duration
+        task_worked_value[task_id] += duration * user_rate
+    
+    # Prepare Excel data
+    excel_data = []
+    for task in response.data:
+        client_name = client_dict.get(task.get("client_id"), "")
+        
+        # Calculate values
+        total_time = task_time.get(task["id"], 0) or 0
+        value_worked = task_worked_value.get(task["id"], 0) or 0
+        monthly_rate = task.get("asesoria_tarif", 0) or 0
+        difference = monthly_rate - value_worked
+        
+        excel_data.append({
+            "Nombre del Cliente": client_name,
+            "Asunto": task.get("title", ""),
+            "Área": task.get("area", ""),
+            "Tipo de facturación": task.get("billing_type", ""),
+            "Tiempo reportado": f"{total_time:.2f}",
+            "Valor trabajado tarifa del abogado x tiempo trabajado": f"{value_worked:,.2f}",
+            "Límite de horas mensuales": task.get("monthly_limit_hours_tasks", 0) or 0,
+            "Tarifa tarifa de mensual": f"{monthly_rate:,.2f}",
+            "Diferencia Tarifa mensual - valor trabajado": f"{difference:,.2f}",
+            "Estado": task.get("facturado", "")
+        })
+    
+    return _create_comprehensive_excel_file(excel_data, "Reporte_Mensualidad", start_date, end_date, 
+                                         conditional_formatting=True, difference_column="H")
+
+
+async def _generate_hourly_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
+    """Generate the hourly billing tasks report"""
+    
+    # Build query for time entries from hourly billing tasks
+    query = supabase.table("time_entries").select("""
+        id, duration, start_time, end_time, description, user_id, facturado,
+        tasks!inner(id, title, client_id, area, billing_type, facturado)
+    """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat()).eq("tasks.billing_type", "hourly")
+    
+    if client_id:
+        query = query.eq("tasks.client_id", client_id)
+    
+    response = query.execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="No se encontraron registros de tiempo para tareas con facturación por hora (billing_type: hourly)")
+    
+    # Get client and user information
+    client_ids = list(set([entry.get("tasks", {}).get("client_id") for entry in response.data if entry.get("tasks", {}).get("client_id")]))
+    user_ids = list(set([entry.get("user_id") for entry in response.data if entry.get("user_id")]))
+    
+    clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
+    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", user_ids).execute()
+    
+    client_dict = {client["id"]: client["name"] for client in clients_response.data} if clients_response.data else {}
+    user_dict = {user["id"]: {"username": user["username"], "role": user.get("role", ""), "rate": user.get("cost_per_hour_client", 0)} for user in users_response.data} if users_response.data else {}
+    
+    # Prepare Excel data
+    excel_data = []
+    for entry in response.data:
+        task = entry.get("tasks", {})
+        user_id = entry.get("user_id")
+        user_info = user_dict.get(user_id, {}) if user_id else {}
+        client_id = task.get("client_id")
+        client_name = client_dict.get(client_id, "")
+        
+        # Calculate total (rate x time)
+        rate = user_info.get("rate", 0) or 0
+        duration = entry.get("duration", 0) or 0
+        total = rate * duration
+        
+        excel_data.append({
+            "Abogado": user_info.get("username", ""),
+            "Rol": user_info.get("role", ""),
+            "Nombre del Cliente": client_name,
+            "Asunto": task.get("title", ""),
+            "Descripción": entry.get("description", ""),
+            "Área": task.get("area", ""),
+            "Tipo de facturación": "Por hora",
+            "Tiempo reportado": f"{duration:.2f}",
+            "Fecha de reporte": entry.get("start_time", "")[:10] if entry.get("start_time") else "",
+            "Tarifa del abogado": f"{rate:,.2f}",
+            "Total Tarifa x Tiempo": f"{total:,.2f}",
+            "Estado": entry.get("facturado", "")
+        })
+    
+    return _create_comprehensive_excel_file(excel_data, "Reporte_Hourly", start_date, end_date)
+
+
+def _create_comprehensive_excel_file(data: List[dict], sheet_name: str, start_date: datetime, end_date: datetime, 
+                                   conditional_formatting: bool = False, difference_column: str = None):
+    """Create and return an Excel file with the comprehensive report data"""
+    
+    if not data:
+        raise HTTPException(status_code=404, detail="No hay datos para generar el reporte")
+    
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    output = io.BytesIO()
+    
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
+        workbook = writer.book
+        worksheet = writer.sheets[sheet_name]
+        
+        # Header format
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'vcenter',
+            'align': 'center',
+            'fg_color': '#D7E4BC',
+            'border': 1
+        })
+        
+        # Cell format
+        cell_format = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter'
+        })
+        
+        # Conditional formatting for difference column (green/red text)
+        if conditional_formatting and difference_column:
+            green_format = workbook.add_format({'font_color': 'green', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+            red_format = workbook.add_format({'font_color': 'red', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+            
+            # Apply conditional formatting to difference column
+            diff_col_idx = ord(difference_column) - ord('A')
+            worksheet.conditional_format(f'{difference_column}2:{difference_column}{len(df)+1}', {
+                'type': 'cell',
+                'criteria': '>',
+                'value': 0,
+                'format': green_format
+            })
+            worksheet.conditional_format(f'{difference_column}2:{difference_column}{len(df)+1}', {
+                'type': 'cell',
+                'criteria': '<',
+                'value': 0,
+                'format': red_format
+            })
+        
+        # Apply headers and adjust columns
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(1, col_num, value, header_format)
+            # Adjust column width based on content
+            max_length = max(len(str(value)), df[value].astype(str).str.len().max())
+            worksheet.set_column(col_num, col_num, min(max_length + 2, 30))
+        
+        # Title format
+        title_format = workbook.add_format({
+            'bold': True,
+            'font_size': 14,
+            'align': 'center',
+            'valign': 'vcenter'
+        })
+        
+        # Merge title row
+        worksheet.merge_range(f'A1:{chr(ord("A") + len(df.columns) - 1)}1', f'{sheet_name}', title_format)
+        
+        # Apply cell formatting
+        for row in range(len(df)):
+            for col in range(len(df.columns)):
+                value = df.iloc[row, col]
+                # Use conditional formatting if applicable, otherwise use regular cell format
+                if conditional_formatting and difference_column and col == diff_col_idx:
+                    # Skip as conditional formatting is already applied
+                    pass
+                else:
+                    worksheet.write(row + 2, col, value, cell_format)
+    
+    output.seek(0)
+    
+    # Generate filename
+    filename = f"{sheet_name}_{start_date.date()}_{end_date.date()}.xlsx"
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 
