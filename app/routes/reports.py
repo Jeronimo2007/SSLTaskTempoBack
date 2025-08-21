@@ -220,7 +220,14 @@ async def download_client_report(
     for task_id, task_info in task_dict.items():
         # Traducir el tipo de facturación a español
         billing_type = task_info['billing_type']
-        billing_type_spanish = "Por Hora" if billing_type == "hourly" else "Por porcentaje"
+        if billing_type == "hourly":
+            billing_type_spanish = "Por Hora"
+        elif billing_type == "fija":
+            billing_type_spanish = "Mensualidad"
+        elif billing_type == "tarifa_fija":
+            billing_type_spanish = "Tarifa Fija"
+        else:
+            billing_type_spanish = billing_type or "No definido"
         
         excel_data.append({
             "Cliente": client_name,
@@ -886,10 +893,12 @@ async def get_client_tasks_billing(
     for task in tasks:
         task_id = task["id"]
         
-        # Get time entries for this task
+        # Get time entries for this task within the specified date range
         time_entries_response = supabase.table("time_entries") \
-            .select("duration, user_id") \
+            .select("duration, user_id, start_time") \
             .eq("task_id", task_id) \
+            .gte("start_time", request.start_date.isoformat()) \
+            .lte("start_time", request.end_date.isoformat()) \
             .execute()
         
         total_time = 0
@@ -933,66 +942,159 @@ async def get_client_tasks_billing(
             "permanent": task.get("permanent", False)
         }
         
-        # Add billing-specific fields
+        # Add billing-specific fields based on billing type
         if task["billing_type"] == "tarifa_fija":
+            # Fixed rate billing
             task_data["asesoria_tarif"] = task.get("asesoria_tarif", 0)
             task_data["total_value"] = task.get("total_value", 0)
-        elif task["billing_type"] == "mensual":
+            task_data["billing_type_display"] = "Tarifa Fija"
+        elif task["billing_type"] == "fija":
+            # Monthly subscription billing (mensualidad)
             task_data["asesoria_tarif"] = task.get("asesoria_tarif", 0)
             task_data["monthly_limit_hours"] = task.get("monthly_limit_hours_tasks", 0)
-        
-        # Handle package hours logic for permanent tasks
-        if request.package_hours and request.package_hours > 0 and task.get("permanent", False):
-            asesoria_tarif = task.get("asesoria_tarif", 0) or 0  # Convert None to 0
+            task_data["billing_type_display"] = "Mensualidad"
             
-            if total_time <= request.package_hours:
-                # Within package hours - total is the asesoria_tarif
-                task_data["package_total"] = asesoria_tarif
-                task_data["additional_total"] = 0
-                task_data["final_total"] = asesoria_tarif
-            else:
-                # Exceeds package hours - calculate additional charges
-                task_data["package_total"] = asesoria_tarif
-                additional_hours = total_time - request.package_hours
-                
-                # Calculate additional charge based on remaining time
-                additional_total = 0
-                if time_entries_response.data and users_response.data:
-                    # Get entries that exceed package hours
-                    remaining_entries = []
-                    current_time = 0
-                    
-                    for entry in sorted(time_entries_response.data, key=lambda x: x.get("start_time", "")):
-                        duration = entry.get("duration", 0) or 0
-                        if current_time + duration <= request.package_hours:
-                            current_time += duration
-                        else:
-                            # This entry exceeds package hours
-                            if current_time < request.package_hours:
-                                # Partial entry - only charge the excess
-                                excess_duration = (current_time + duration) - request.package_hours
-                                remaining_entries.append({
-                                    "duration": excess_duration,
-                                    "user_id": entry["user_id"]
-                                })
+            # Check if monthly limit hours have been reached
+            monthly_limit = task.get("monthly_limit_hours_tasks", 0) or 0
+            if monthly_limit > 0:
+                if total_time >= monthly_limit:
+                    task_data["monthly_limit_reached"] = True
+                    task_data["additional_hours"] = total_time - monthly_limit
+                    # Calculate additional charges for hours beyond the limit
+                    if time_entries_response.data and users_response.data:
+                        # Find entries that exceed the monthly limit
+                        remaining_entries = []
+                        current_time = 0
+                        
+                        for entry in sorted(time_entries_response.data, key=lambda x: x.get("start_time", "")):
+                            duration = entry.get("duration", 0) or 0
+                            
+                            if current_time + duration <= monthly_limit:
+                                # This entry fits completely within the monthly limit
+                                current_time += duration
                             else:
-                                # Full entry is additional
-                                remaining_entries.append(entry)
+                                # This entry exceeds the monthly limit
+                                if current_time < monthly_limit:
+                                    # Partial entry - only charge the excess portion
+                                    excess_duration = (current_time + duration) - monthly_limit
+                                    remaining_entries.append({
+                                        "duration": excess_duration,
+                                        "user_id": entry["user_id"]
+                                    })
+                                    current_time = monthly_limit  # Mark that we've reached the limit
+                                else:
+                                    # Full entry is beyond the limit - charge for all hours
+                                    remaining_entries.append(entry)
+                                    current_time += duration
+                        
+                        # Debug: Show what we found
+                        total_excess_hours = sum(entry['duration'] for entry in remaining_entries)
+                        print(f"Debug: Monthly limit: {monthly_limit}h")
+                        print(f"Debug: Total time worked: {total_time}h")
+                        print(f"Debug: Hours within limit: {monthly_limit}h")
+                        print(f"Debug: Hours beyond limit: {total_excess_hours}h")
+                        print(f"Debug: Verification: {monthly_limit + total_excess_hours} should equal {total_time}")
+                        
+                        # Show each entry that exceeds the limit
+                        for i, entry in enumerate(remaining_entries):
+                            print(f"Debug: Entry {i+1}: User {entry['user_id']} - {entry['duration']}h")
+                        
+                        # Prepare to calculate additional charges from breakdown
+                        # (The actual calculation will be done in the breakdown loop below)
                     
-                    # Calculate additional charges
+                    # Add detailed breakdown of additional charges
+                    task_data["additional_charges_breakdown"] = []
+                    breakdown_total = 0  # Track the sum of subtotals
+                    
                     for entry in remaining_entries:
-                        user_rate = user_dict.get(entry["user_id"], {}).get("cost_per_hour_client", 0)
+                        user_id = entry["user_id"]
+                        duration = entry["duration"]
+                        
+                        # Get the user's rate from the users table
+                        user_rate = user_dict.get(user_id, {}).get("cost_per_hour_client", 0)
+                        
+                        # Validate that we got a valid rate
+                        if user_rate is None or user_rate == 0:
+                            print(f"Warning: User {user_id} has no rate or rate is 0")
+                        
+                        # Apply currency conversion if needed
                         if task.get("coin") == "USD":
-                            exchange_rate = 4000
+                            exchange_rate = 4000  # Default COP to USD rate
                             user_rate = user_rate / exchange_rate
-                        additional_total += entry["duration"] * user_rate
-                
-                task_data["additional_total"] = round(additional_total, 2)
-                task_data["final_total"] = round(asesoria_tarif + additional_total, 2)
+                        
+                        # Calculate subtotal: time_worked_by_user × user_tariff
+                        subtotal = duration * user_rate
+                        breakdown_total += subtotal
+                        
+                        # Debug logging
+                        print(f"User {user_id}: {duration}h × ${user_rate}/h = ${subtotal}")
+                        
+                        # Get user name for display
+                        user_name = "Unknown User"
+                        if users_response.data:
+                            for user in users_response.data:
+                                if user["id"] == user_id:
+                                    user_name = user.get("username", "Unknown User")
+                                    break
+                        
+                        breakdown_entry = {
+                            "user_id": user_id,
+                            "user_name": user_name,
+                            "hours": duration,
+                            "rate_per_hour": user_rate,
+                            "subtotal": subtotal
+                        }
+                        task_data["additional_charges_breakdown"].append(breakdown_entry)
+                    
+                    # Set additional charge as the sum of all user subtotals
+                    # Formula: Σ (time_worked_by_user × user_tariff)
+                    task_data["additional_charge"] = round(breakdown_total, 2)
+                    task_data["total_with_additional"] = round(task_data["asesoria_tarif"] + breakdown_total, 2)
+                    
+                    # Validate that our calculation matches the expected excess hours
+                    calculated_excess_hours = sum(entry['duration'] for entry in remaining_entries)
+                    if abs(calculated_excess_hours - task_data['additional_hours']) > 0.01:
+                        print(f"Warning: Calculated excess hours ({calculated_excess_hours}) don't match expected ({task_data['additional_hours']})")
+                    
+                    # Debug summary
+                    print(f"Task {task_id}: Monthly limit {monthly_limit}h, worked {total_time}h")
+                    print(f"Expected excess hours: {task_data['additional_hours']}h")
+                    print(f"Calculated excess hours: {calculated_excess_hours}h")
+                    print(f"Additional charge breakdown: {len(task_data['additional_charges_breakdown'])} entries")
+                    print(f"Total additional charge: ${breakdown_total}")
+                    print(f"Final total: ${task_data['total_with_additional']}")
+                else:
+                    task_data["monthly_limit_reached"] = False
+                    task_data["additional_hours"] = 0
+                    task_data["additional_charge"] = 0
+                    task_data["total_with_additional"] = task_data["asesoria_tarif"]
+            else:
+                # No monthly limit set
+                task_data["monthly_limit_reached"] = False
+                task_data["additional_hours"] = 0
+                task_data["additional_charge"] = 0
+                task_data["total_with_additional"] = task_data["asesoria_tarif"]
+        elif task["billing_type"] == "hourly":
+            # Hourly billing
+            task_data["billing_type_display"] = "Por Hora"
+            # For hourly tasks, the total is based on time worked
+            task_data["total_value"] = total_generated
         else:
-            # No package hours or not permanent task
-            task_data["package_total"] = 0
-            task_data["additional_total"] = 0
+            # Unknown billing type
+            task_data["billing_type_display"] = task["billing_type"] or "No definido"
+        
+        # Set final total based on billing type
+        if task["billing_type"] == "fija":
+            # For mensualidad tasks, use the total with additional charges if applicable
+            if "total_with_additional" in task_data:
+                task_data["final_total"] = task_data["total_with_additional"]
+            else:
+                task_data["final_total"] = task_data.get("asesoria_tarif", 0)
+        elif task["billing_type"] == "tarifa_fija":
+            # For fixed rate tasks, use the fixed rate
+            task_data["final_total"] = task_data.get("asesoria_tarif", 0)
+        else:
+            # For hourly tasks, use the generated total
             task_data["final_total"] = total_generated
         
         result.append(task_data)
@@ -1295,7 +1397,15 @@ async def get_invoice_registry_excel(
         # Preparar datos para Excel
         excel_data = []
         for invoice in response.data:
-            billing_type = "Por Hora" if invoice["billing_type"] == "hourly" else "Por porcentaje"
+            # Traducir el tipo de facturación a español
+            if invoice["billing_type"] == "hourly":
+                billing_type = "Por Hora"
+            elif invoice["billing_type"] == "fija":
+                billing_type = "Mensualidad"
+            elif invoice["billing_type"] == "tarifa_fija":
+                billing_type = "Tarifa Fija"
+            else:
+                billing_type = invoice["billing_type"] or "No definido"
             currency = "COP" if invoice["currency"] == "COP" else "USD"
             
             excel_data.append({

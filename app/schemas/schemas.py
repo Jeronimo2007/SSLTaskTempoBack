@@ -248,7 +248,8 @@ class TaskTimeEntriesRequest(BaseModel):
 
 class ClientTasksBillingRequest(BaseModel):
     client_id: int
-    package_hours: Optional[float] = None
+    start_date: datetime
+    end_date: datetime
 
 
 class GroupCreate(BaseModel):
