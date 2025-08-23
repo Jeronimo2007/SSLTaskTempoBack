@@ -177,6 +177,7 @@ class ComprehensiveReportRequest(BaseModel):
     start_date: Optional[datetime] = None  # Defaults to current month
     end_date: Optional[datetime] = None    # Defaults to current month
     client_id: Optional[int] = None        # Defaults to all clients
+    task_id: Optional[int] = None          # Defaults to all tasks (if provided, returns task-specific report)
 
 
 class EventCreate(BaseModel):

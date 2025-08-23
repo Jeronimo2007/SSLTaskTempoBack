@@ -17,6 +17,9 @@ async def create_pendiente(data: PendienteCreate):
     
     # Convert the data to a dict and handle datetime serialization
     pendiente_data = data.model_dump()
+
+    created_at = datetime.now(ZoneInfo("America/Bogota"))
+    pendiente_data['created_at'] = created_at.isoformat()
     
     # Handle datetime serialization for due_date
     if pendiente_data.get('due_date'):

@@ -33,6 +33,34 @@ def parse_datetime(date_str):
         return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
 
 
+def get_billing_type_display(billing_type: str) -> str:
+    """Convert database billing type to display name"""
+    billing_type_mapping = {
+        "fija": "Mensualidad",
+        "tarifa_fija": "Tarifa Fija", 
+        "hourly": "Por Hora"
+    }
+    return billing_type_mapping.get(billing_type, billing_type)
+
+
+def format_hours_to_hhmm(hours: float) -> str:
+    """Convert decimal hours to HH:MM format"""
+    if hours is None or hours == 0:
+        return "00:00"
+    
+    total_minutes = int(hours * 60)
+    h = total_minutes // 60
+    m = total_minutes % 60
+    return f"{h:02d}:{m:02d}"
+
+
+def format_currency(amount: float) -> str:
+    """Format currency amount as whole number with dot separators"""
+    if amount is None:
+        return "0"
+    return f"{int(round(amount)):,}".replace(",", ".")
+
+
 @router.post("/hours_by_client/", response_model=List[dict])
 async def get_hours_by_client(
     request: ReportRequest,
@@ -336,11 +364,11 @@ async def download_task_report(
         user_data = user_dict[entry["user_id"]]
 
         # Calcular tiempo trabajado
-        tiempo_trabajado = round(float(entry.get("duration", 0) or 0), 2)
+        tiempo_trabajado = float(entry.get("duration", 0) or 0)
 
         # Calcular tarifa horaria y valor de la hora valorizada
-        tarifa_horaria = round(user_data["cost_per_hour_client"], 2)
-        total = round(tarifa_horaria * tiempo_trabajado, 2)
+        tarifa_horaria = user_data["cost_per_hour_client"]
+        total = tarifa_horaria * tiempo_trabajado
 
         row = {
             "Abogado": user_data["username"],
@@ -351,11 +379,11 @@ async def download_task_report(
             "Área": task_data.get("area", ""),
             "Fecha Trabajo": entry["start_time"][:10],
             "Modo de Facturación": "Por Hora",
-            "Tiempo Trabajado": tiempo_trabajado,
-            "Tarifa Horaria": tarifa_horaria,
+            "Tiempo Trabajado": format_hours_to_hhmm(tiempo_trabajado),
+            "Tarifa Horaria": format_currency(tarifa_horaria),
             "Moneda": "COP",
-            "Total": total,
-            "Facturado": entry.get("facturado", "no hay datos")
+            "Total": format_currency(total),
+            "Estado de facturación": entry.get("facturado", "no hay datos")
         }
 
         excel_data.append(row)
@@ -1491,6 +1519,12 @@ async def generate_comprehensive_report(
     - tarifa_fija: Fixed rate clients report
     - mensualidad: Monthly subscription clients report
     - hourly: Hourly billing tasks report
+    
+    If task_id is provided, returns a task-specific report in the format corresponding to the task's billing type:
+    - hourly tasks: Hourly billing format with time tracking and rates
+    - tarifa_fija tasks: Fixed rate format showing fixed amount
+    - fija (mensualidad) tasks: Monthly subscription format with limits and additional charges
+    - other billing types: General format as fallback
     """
     try:
         from datetime import datetime, date
@@ -1507,6 +1541,11 @@ async def generate_comprehensive_report(
             start_date = request.start_date
             end_date = request.end_date
 
+        # If task_id is provided, generate task-specific report based on billing type
+        if request.task_id:
+            return await _generate_task_specific_report(start_date, end_date, request.task_id, request.report_type)
+        
+        # Otherwise, generate comprehensive reports as before
         if request.report_type == "general":
             return await _generate_general_report(start_date, end_date, request.client_id)
         elif request.report_type == "tarifa_fija":
@@ -1573,16 +1612,16 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
             "Asunto": task.get("title", ""),
             "Descripción": entry.get("description", ""),
             "Área": task.get("area", ""),
-            "Tipo de facturación": task.get("billing_type", ""),
-            "Tiempo reportado": f"{duration:.2f}",
+            "Tipo de facturación": get_billing_type_display(task.get("billing_type", "")),
+            "Tiempo reportado": format_hours_to_hhmm(duration),
             "Fecha de reporte": entry.get("start_time", "")[:10] if entry.get("start_time") else "",
-            "Tarifa del abogado": f"{rate:,.2f}",
-            "Total Tarifa x Tiempo": f"{total:,.2f}",
-            "Estado": entry.get("facturado", ""),
+            "Tarifa del abogado": format_currency(rate),
+            "Total Tarifa x Tiempo": format_currency(total),
+            "Estado de facturación": entry.get("facturado", ""),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
-    return _create_comprehensive_excel_file(excel_data, "Reporte_General", start_date, end_date)
+    return _create_comprehensive_excel_file(excel_data, "Reporte General", start_date, end_date)
 
 
 async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
@@ -1616,14 +1655,14 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
             "Cliente": client_name,
             "Asunto": task.get("title", ""),
             "Fecha de creación": task.get("created_at", "")[:10] if task.get("created_at") else "",
-            "Tipo de facturación": task.get("billing_type", ""),
-            "Tarifa tarifa fija": f"{task.get('total_value', 0) or 0:,.2f}",
-            "Estado": task.get("facturado", ""),
+            "Tipo de facturación": get_billing_type_display(task.get("billing_type", "")),
+            "Tarifa fija": format_currency(task.get('total_value', 0) or 0),
+            "Estado de facturación": task.get("facturado", ""),
             "Nota": task.get("note", ""),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
-    return _create_comprehensive_excel_file(excel_data, "Reporte_Tarifa_Fija", start_date, end_date)
+    return _create_comprehensive_excel_file(excel_data, "Reporte Tarifa Fija", start_date, end_date)
 
 
 async def _generate_monthly_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
@@ -1690,17 +1729,16 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
             "Nombre del Cliente": client_name,
             "Asunto": task.get("title", ""),
             "Área": task.get("area", ""),
-            "Tipo de facturación": task.get("billing_type", ""),
-            "Tiempo reportado": f"{total_time:.2f}",
-            "Valor trabajado tarifa del abogado x tiempo trabajado": f"{value_worked:,.2f}",
-            "Límite de horas mensuales": task.get("monthly_limit_hours_tasks", 0) or 0,
-            "Tarifa tarifa de mensual": f"{monthly_rate:,.2f}",
-            "Diferencia Tarifa mensual - valor trabajado": f"{difference:,.2f}",
-            "Estado": task.get("facturado", ""),
+            "Tipo de facturación": "Mensualidad",
+            "Tiempo reportado": format_hours_to_hhmm(total_time),
+            "Valor trabajado": format_currency(value_worked),
+            "Límite de horas mensuales": format_hours_to_hhmm(task.get("monthly_limit_hours_tasks", 0) or 0),
+            "Tarifa tarifa de mensual": format_currency(monthly_rate),
+            "Diferencia": format_currency(difference),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
-    return _create_comprehensive_excel_file(excel_data, "Reporte_Mensualidad", start_date, end_date, 
+    return _create_comprehensive_excel_file(excel_data, "Reporte Mensualidad", start_date, end_date, 
                                          conditional_formatting=True, difference_column="H")
 
 
@@ -1753,15 +1791,283 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
             "Descripción": entry.get("description", ""),
             "Área": task.get("area", ""),
             "Tipo de facturación": "Por hora",
-            "Tiempo reportado": f"{duration:.2f}",
+            "Tiempo reportado": format_hours_to_hhmm(duration),
             "Fecha de reporte": entry.get("start_time", "")[:10] if entry.get("start_time") else "",
-            "Tarifa del abogado": f"{rate:,.2f}",
-            "Total Tarifa x Tiempo": f"{total:,.2f}",
-            "Estado": entry.get("facturado", ""),
+            "Tarifa del abogado": format_currency(rate),
+            "Total Tarifa x Tiempo": format_currency(total),
+            "Estado de facturación": entry.get("facturado", ""),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
-    return _create_comprehensive_excel_file(excel_data, "Reporte_Hourly", start_date, end_date)
+    return _create_comprehensive_excel_file(excel_data, "Reporte Hourly", start_date, end_date)
+
+
+async def _generate_task_specific_report(start_date: datetime, end_date: datetime, task_id: int, report_type: str):
+    """Generate a task-specific report based on the billing type"""
+    
+    # Get task information including billing type
+    task_response = supabase.table("tasks").select("""
+        id, title, client_id, area, billing_type, facturado, assigned_user_name,
+        asesoria_tarif, total_value, monthly_limit_hours_tasks, permanent
+    """).eq("id", task_id).single().execute()
+    
+    if not task_response.data:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    
+    task = task_response.data
+    billing_type = task.get("billing_type")
+    
+    # Get client information
+    client_response = supabase.table("clients").select("id, name").eq("id", task["client_id"]).single().execute()
+    if not client_response.data:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    client = client_response.data
+    
+    # Get time entries for the task in the date range
+    time_entries_response = supabase.table("time_entries").select("""
+        id, duration, start_time, end_time, description, user_id, facturado
+    """).eq("task_id", task_id).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat()).execute()
+    
+    if not time_entries_response.data:
+        raise HTTPException(status_code=404, detail="No hay registros de tiempo para esta tarea en el período especificado")
+    
+    # Get user information
+    user_ids = list(set([entry["user_id"] for entry in time_entries_response.data]))
+    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", user_ids).execute()
+    user_dict = {user["id"]: user for user in users_response.data}
+    
+    # Generate report based on billing type
+    if billing_type == "hourly":
+        return await _generate_task_hourly_report(task, client, time_entries_response.data, user_dict, start_date, end_date)
+    elif billing_type == "tarifa_fija":
+        return await _generate_task_fixed_rate_report(task, client, time_entries_response.data, user_dict, start_date, end_date)
+    elif billing_type == "fija":  # mensualidad
+        return await _generate_task_monthly_report(task, client, time_entries_response.data, user_dict, start_date, end_date)
+    else:
+        # Default to general format for unknown billing types
+        return await _generate_task_general_report(task, client, time_entries_response.data, user_dict, start_date, end_date)
+
+
+async def _generate_task_hourly_report(task: dict, client: dict, time_entries: List[dict], user_dict: dict, start_date: datetime, end_date: datetime):
+    """Generate hourly billing report for a specific task"""
+    
+    excel_data = []
+    total_hours = 0
+    total_value = 0
+    
+    for entry in time_entries:
+        user = user_dict.get(entry["user_id"], {})
+        duration = entry.get("duration", 0) or 0
+        rate = user.get("cost_per_hour_client", 0) or 0
+        total = duration * rate
+        
+        total_hours += duration
+        total_value += total
+        
+        excel_data.append({
+            "Abogado": user.get("username", ""),
+            "Rol": user.get("role", ""),
+            "Cliente": client["name"],
+            "Asunto": task["title"],
+            "Trabajo": entry.get("description", ""),
+            "Área": task.get("area", ""),
+            "Fecha Trabajo": entry["start_time"][:10] if entry.get("start_time") else "",
+            "Modo de Facturación": "Por Hora",
+            "Tiempo Trabajado": format_hours_to_hhmm(duration),
+            "Tarifa Horaria": format_currency(rate),
+            "Moneda": "COP",
+            "Total": format_currency(total),
+            "Estado de facturación": entry.get("facturado", "no hay datos")
+        })
+    
+    # Add summary row
+    excel_data.append({
+        "Abogado": "TOTAL",
+        "Rol": "",
+        "Cliente": "",
+        "Asunto": "",
+        "Trabajo": "",
+        "Área": "",
+        "Fecha Trabajo": "",
+        "Modo de Facturación": "",
+        "Tiempo Trabajado": format_hours_to_hhmm(total_hours),
+        "Tarifa Horaria": "",
+        "Moneda": "",
+        "Total": format_currency(total_value),
+        "Estado de facturación": ""
+    })
+    
+    return _create_comprehensive_excel_file(excel_data, f"Reporte Tarea {task['id']} Por Hora", start_date, end_date)
+
+
+async def _generate_task_fixed_rate_report(task: dict, client: dict, time_entries: List[dict], user_dict: dict, start_date: datetime, end_date: datetime):
+    """Generate fixed rate billing report for a specific task"""
+    
+    excel_data = []
+    total_hours = 0
+    
+    for entry in time_entries:
+        user = user_dict.get(entry["user_id"], {})
+        duration = entry.get("duration", 0) or 0
+        total_hours += duration
+        
+        excel_data.append({
+            "Abogado": user.get("username", ""),
+            "Rol": user.get("role", ""),
+            "Cliente": client["name"],
+            "Asunto": task["title"],
+            "Trabajo": entry.get("description", ""),
+            "Área": task.get("area", ""),
+            "Fecha Trabajo": entry["start_time"][:10] if entry.get("start_time") else "",
+            "Modo de Facturación": "Tarifa Fija",
+            "Tiempo Trabajado": format_hours_to_hhmm(duration),
+            "Tarifa Fija": format_currency(task.get('total_value', 0)),
+            "Moneda": "COP",
+            "Total": format_currency(task.get('total_value', 0)),
+            "Estado de facturación": entry.get("facturado", "no hay datos")
+        })
+    
+    # Add summary row
+    excel_data.append({
+        "Abogado": "TOTAL",
+        "Rol": "",
+        "Cliente": "",
+        "Asunto": "",
+        "Trabajo": "",
+        "Área": "",
+        "Fecha Trabajo": "",
+        "Modo de Facturación": "",
+        "Tiempo Trabajado": format_hours_to_hhmm(total_hours),
+        "Tarifa Fija": "",
+        "Moneda": "",
+        "Total": format_currency(task.get('total_value', 0)),
+        "Estado de facturación": ""
+    })
+    
+    return _create_comprehensive_excel_file(excel_data, f"Reporte Tarea {task['id']} Tarifa Fija", start_date, end_date)
+
+
+async def _generate_task_monthly_report(task: dict, client: dict, time_entries: List[dict], user_dict: dict, start_date: datetime, end_date: datetime):
+    """Generate monthly subscription billing report for a specific task"""
+    
+    excel_data = []
+    total_hours = 0
+    monthly_limit = task.get("monthly_limit_hours_tasks", 0)
+    monthly_rate = task.get("asesoria_tarif", 0)
+    
+    for entry in time_entries:
+        user = user_dict.get(entry["user_id"], {})
+        duration = entry.get("duration", 0) or 0
+        total_hours += duration
+        
+        excel_data.append({
+            "Abogado": user.get("username", ""),
+            "Rol": user.get("role", ""),
+            "Cliente": client["name"],
+            "Asunto": task["title"],
+            "Trabajo": entry.get("description", ""),
+            "Área": task.get("area", ""),
+            "Fecha Trabajo": entry["start_time"][:10] if entry.get("start_time") else "",
+            "Modo de Facturación": "Mensualidad",
+            "Tiempo Trabajado": format_hours_to_hhmm(duration),
+            "Límite Mensual": format_hours_to_hhmm(monthly_limit),
+            "Tarifa Mensual": format_currency(monthly_rate),
+            "Moneda": "COP",
+            "Total": format_currency(monthly_rate),
+            "Estado de facturación": entry.get("facturado", "no hay datos")
+        })
+    
+    # Calculate additional charges if monthly limit is exceeded
+    additional_charge = 0
+    if total_hours > monthly_limit:
+        excess_hours = total_hours - monthly_limit
+        # Calculate additional charge based on user rates
+        for entry in time_entries:
+            user = user_dict.get(entry["user_id"], {})
+            rate = user.get("cost_per_hour_client", 0) or 0
+            duration = entry.get("duration", 0) or 0
+            if total_hours > monthly_limit:
+                if total_hours - duration >= monthly_limit:
+                    # This entry contributes to additional charges
+                    additional_charge += duration * rate
+                else:
+                    # Partial contribution to additional charges
+                    partial_hours = total_hours - monthly_limit
+                    additional_charge += partial_hours * rate
+                total_hours -= duration
+    
+    # Add summary row
+    excel_data.append({
+        "Abogado": "TOTAL",
+        "Rol": "",
+        "Cliente": "",
+        "Asunto": "",
+        "Trabajo": "",
+        "Área": "",
+        "Fecha Trabajo": "",
+        "Modo de Facturación": "",
+        "Tiempo Trabajado": format_hours_to_hhmm(total_hours),
+        "Límite Mensual": "",
+        "Tarifa Mensual": "",
+        "Moneda": "",
+        "Total": format_currency(monthly_rate + additional_charge),
+        "Estado de facturación": "",
+        "Abogado asignado": ""
+    })
+    
+    return _create_comprehensive_excel_file(excel_data, f"Reporte Tarea {task['id']} Mensualidad", start_date, end_date)
+
+
+async def _generate_task_general_report(task: dict, client: dict, time_entries: List[dict], user_dict: dict, start_date: datetime, end_date: datetime):
+    """Generate general format report for a specific task"""
+    
+    excel_data = []
+    total_hours = 0
+    total_value = 0
+    
+    for entry in time_entries:
+        user = user_dict.get(entry["user_id"], {})
+        duration = entry.get("duration", 0) or 0
+        rate = user.get("cost_per_hour_client", 0) or 0
+        total = duration * rate
+        
+        total_hours += duration
+        total_value += total
+        
+        excel_data.append({
+            "Abogado": user.get("username", ""),
+            "Rol": user.get("role", ""),
+            "Cliente": client["name"],
+            "Asunto": task["title"],
+            "Descripción": entry.get("description", ""),
+            "Área": task.get("area", ""),
+            "Tipo de facturación": get_billing_type_display(task.get("billing_type", "")),
+            "Tiempo reportado": format_hours_to_hhmm(duration),
+            "Fecha de reporte": entry["start_time"][:10] if entry.get("start_time") else "",
+            "Tarifa del abogado": format_currency(rate),
+            "Total Tarifa x Tiempo": format_currency(total),
+            "Estado de facturación": entry.get("facturado", ""),
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
+        })
+    
+    # Add summary row
+    excel_data.append({
+        "Abogado": "TOTAL",
+        "Rol": "",
+        "Cliente": "",
+        "Asunto": "",
+        "Descripción": "",
+        "Área": "",
+        "Tipo de facturación": "",
+        "Tiempo reportado": format_hours_to_hhmm(total_hours),
+        "Fecha de reporte": "",
+        "Tarifa del abogado": "",
+        "Total Tarifa x Tiempo": format_currency(total_value),
+        "Estado de facturación": "",
+        "Abogado asignado": ""
+    })
+    
+    return _create_comprehensive_excel_file(excel_data, f"Reporte Tarea {task['id']} General", start_date, end_date)
 
 
 def _create_comprehensive_excel_file(data: List[dict], sheet_name: str, start_date: datetime, end_date: datetime, 
@@ -1786,7 +2092,7 @@ def _create_comprehensive_excel_file(data: List[dict], sheet_name: str, start_da
             'text_wrap': True,
             'valign': 'vcenter',
             'align': 'center',
-            'fg_color': '#D7E4BC',
+            'fg_color': '#52b5f7',
             'border': 1
         })
         
