@@ -15,4 +15,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("Faltan las credenciales de Supabase. Revisa tu archivo .env")
 
 
+os.environ.setdefault("HTTPX_DISABLE_HTTP2", "1")
+
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)

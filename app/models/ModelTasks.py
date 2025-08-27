@@ -30,7 +30,7 @@ def create_task(task_data: TaskCreate):
     
     else:
 
-        return {"error": response.error}
+        return {"error": "Error creating task"}
 
 
 def get_all_tasks_by_client(client_id: int):
@@ -139,7 +139,7 @@ def update_task(task_data: TaskUpdate):
     if response.data:
         return response.data
     else:
-        raise HTTPException(status_code=400, detail=response.error)
+        raise HTTPException(status_code=400, detail="Error updating task")
     
 
 def delete_task(task_id: int):
@@ -151,8 +151,8 @@ def delete_task(task_id: int):
         # Delete the task
         response = supabase.table("tasks").delete().eq("id", task_id).execute()
         
-        if hasattr(response, 'error') and response.error:
-            return {"error": f"No se pudo eliminar la tarea: {response.error}"}
+        if not response.data:
+            return {"error": "No se pudo eliminar la tarea"}
         else:
             return {"message": "Tarea eliminada correctamente"}
             

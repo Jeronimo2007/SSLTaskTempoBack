@@ -67,17 +67,27 @@ async def get_time_entry_endpoint(entry_id: int):
 
 @router.put("/update")
 async def update_time_entry_endpoint(entry_data: TimeEntryUpdate):
+    print("=== UPDATE TIME ENTRY ENDPOINT ===")
     print("entry_data:", entry_data)
+    print("entry_data type:", type(entry_data))
+    print("entry_data dict:", entry_data.dict())
 
     """ update a time entry"""
 
-    entry = update_time_entry(entry_data)
-
-    if "error" in entry:
-
-        raise HTTPException(status_code=400, detail=entry["error"])
-    
-    return entry
+    try:
+        entry = update_time_entry(entry_data)
+        print("Result from update_time_entry:", entry)
+        
+        if "error" in entry:
+            print("Error found in result:", entry["error"])
+            raise HTTPException(status_code=400, detail=entry["error"])
+        
+        return entry
+        
+    except Exception as e:
+        print(f"Exception in endpoint: {e}")
+        print(f"Exception type: {type(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @router.delete("/delete/{entry_id}")

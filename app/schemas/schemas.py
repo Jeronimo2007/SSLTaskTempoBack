@@ -101,6 +101,9 @@ class TimeEntryCreate(BaseModel):
 class TimeEntryUpdate(BaseModel):
     id: int
     description: Optional[str] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    task_id: Optional[int] = None
 
 class FacturadoUpdate(BaseModel):
     timeEntry_id: int

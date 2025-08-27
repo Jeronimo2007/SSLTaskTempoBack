@@ -15,8 +15,8 @@ def user_create(data: UserCreate):
         response = supabase.table('users').insert(user_data).execute()
 
         # Check if response contains an error
-        if hasattr(response, 'error') and response.error:
-            raise HTTPException(status_code=400, detail=f"Supabase error: {response.error}")
+        if not response.data:
+            raise HTTPException(status_code=400, detail="Supabase error: No data returned")
 
         # Verify if any record was actually inserted
         if hasattr(response, 'data') and response.data:
@@ -34,8 +34,8 @@ def get_all():
     try:
         response = supabase.table('users').select('*').execute()
 
-        if hasattr(response, 'error') and response.error:
-            raise HTTPException(status_code=400, detail=f"Supabase error: {response.error}")
+        if not response.data:
+            raise HTTPException(status_code=400, detail="Supabase error: No data returned")
 
         if hasattr(response, 'data') and response.data:
             return response.data
@@ -61,8 +61,8 @@ def update_user(data: UserUpdate):
 
         response = supabase.table('users').update(update_data).eq('id', data.id).execute()
 
-        if hasattr(response, 'error') and response.error:
-            raise HTTPException(status_code=400, detail=f"Supabase error: {response.error}")
+        if not response.data:
+            raise HTTPException(status_code=400, detail="Supabase error: No data returned")
 
         if hasattr(response, 'data') and response.data:
             return response.data
@@ -82,8 +82,8 @@ def delete_user(user_id: int):
     try:
         response = supabase.table('users').delete().eq('id', user_id).execute()
 
-        if hasattr(response, 'error') and response.error:
-            raise HTTPException(status_code=400, detail=f"Supabase error: {response.error}")
+        if not response.data:
+            raise HTTPException(status_code=400, detail="Supabase error: No data returned")
 
         if hasattr(response, 'data') and response.data:
             return response.data

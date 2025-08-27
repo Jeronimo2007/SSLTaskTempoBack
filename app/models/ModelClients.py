@@ -192,11 +192,11 @@ def update_client(data: clientUpdate):
             response = supabase.table('client_user').delete().or_(or_filter_string).execute()
             # Check if response.data exists and is not empty (delete often returns the deleted rows)
             # Also check for errors explicitly if the library provides them
-            if hasattr(response, 'error') and response.error:
+            if not response.data:
                 # Consider raising HTTPException or logging the error more robustly
                 return {
                     "error": "Error al remover abogados del cliente",
-                    "details": response.error
+                    "details": "Unknown error"
                 }
             elif not response.data: # If no error but also no data, it might mean nothing matched or an issue occurred
                 # Depending on expected behavior, this might not be an error,
@@ -217,10 +217,10 @@ def update_client(data: clientUpdate):
                 .eq('id', client_id)\
                 .execute()
 
-            if hasattr(response, 'error') and response.error:
+            if not response.data:
                  return {
                     "error": "Error al actualizar el cliente",
-                    "details": response.error
+                    "details": "Unknown error"
                 }
             elif response.data:
                 # Combine results if both client data and lawyers were updated

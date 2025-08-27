@@ -26,7 +26,7 @@ def create_user(username: str, password: str, role_code: str):
     if response.data:
         return {"message": "Usuario creado exitosamente", "user": response.data}
     else:
-        return {"error": "Error al crear el usuario", "details": response.error}
+        return {"error": "Error al crear el usuario", "details": "Unknown error"}
 
 def get_user(email: str):
     """ Get all the data of a user by email, excluding those marked as 'desvinculado' """
