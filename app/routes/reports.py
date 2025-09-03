@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 from app.database.data import supabase
-from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, ClientTasksBillingRequest, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest, TaskReportRequest, TaskTimeEntriesRequest, ComprehensiveReportRequest
+from app.schemas.schemas import ClientReportRequest, ClientReportRequestTimeEntries, ClientTasksBillingRequest, InvoiceByHoursRequest, InvoiceByPercentageRequest, InvoiceFilterRequest, ReportRequest, TaskReportRequest, TaskTimeEntriesRequest, ComprehensiveReportRequest, SimplifiedReportRequest
 from app.services.utils import role_required
 import pandas as pd
 import io
@@ -2164,5 +2164,181 @@ def _create_comprehensive_excel_file(data: List[dict], sheet_name: str, start_da
     )
 
 
+@router.post("/simplified_report")
+async def generate_simplified_report(
+    request: SimplifiedReportRequest,
+    user: dict = Depends(role_required(["socio", "senior", "consultor"]))
+):
+    """
+    Generate a simplified report showing all clients with tasks, including those with 0 time reported.
+    Shows only the 7 required columns:
+    1. Abogado asignado (assigned lawyer)
+    2. Rol (role) 
+    3. Nombre del cliente (client name)
+    4. Asunto (subject/task title)
+    5. Área (area)
+    6. Tipo de facturación (billing type)
+    7. Valor de facturación (billing value)
+    """
+    try:
+        from datetime import datetime, date
+        import calendar
+        
+        # Set default dates to current month if not provided
+        if not request.start_date or not request.end_date:
+            today = date.today()
+            first_day = date(today.year, today.month, 1)
+            last_day = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+            start_date = datetime.combine(first_day, datetime.min.time())
+            end_date = datetime.combine(last_day, datetime.max.time())
+        else:
+            start_date = request.start_date
+            end_date = request.end_date
+
+        # Get all tasks for clients (regardless of time entries)
+        query = supabase.table("tasks").select("""
+            id, title, client_id, area, billing_type, assigned_user_name,
+            asesoria_tarif, total_value, monthly_limit_hours_tasks
+        """)
+        
+        # Only filter by client if client_id is provided
+        if request.client_id:
+            query = query.eq("client_id", request.client_id)
+        
+        tasks_response = query.execute()
+        
+        if not tasks_response.data:
+            raise HTTPException(status_code=404, detail="No se encontraron tareas")
+        
+        # Get client information
+        client_ids = list(set([task.get("client_id") for task in tasks_response.data if task.get("client_id")]))
+        clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
+        client_dict = {client["id"]: client["name"] for client in clients_response.data} if clients_response.data else {}
+        
+        # Get user information for assigned lawyers
+        assigned_users = list(set([task.get("assigned_user_name") for task in tasks_response.data if task.get("assigned_user_name")]))
+        users_response = supabase.table("users").select("username, role").in_("username", assigned_users).execute()
+        user_dict = {user["username"]: user["role"] for user in users_response.data} if users_response.data else {}
+        
+        # Prepare Excel data
+        excel_data = []
+        for task in tasks_response.data:
+            client_name = client_dict.get(task.get("client_id"), "")
+            assigned_lawyer = task.get("assigned_user_name", "") or "Sin abogado asignado"
+            role = user_dict.get(assigned_lawyer, "") if assigned_lawyer != "Sin abogado asignado" else ""
+            
+            # Calculate billing value based on billing type
+            billing_type = task.get("billing_type", "")
+            billing_value = 0
+            
+            if billing_type == "tarifa_fija":
+                billing_value = task.get("total_value", 0) or 0
+            elif billing_type == "fija":  # mensualidad
+                billing_value = task.get("asesoria_tarif", 0) or 0
+            elif billing_type == "hourly":
+                # For hourly tasks, we need to calculate based on time entries
+                # Get time entries for this task in the date range
+                time_entries_response = supabase.table("time_entries").select("""
+                    duration, user_id
+                """).eq("task_id", task["id"]).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat()).execute()
+                
+                if time_entries_response.data:
+                    # Get user rates
+                    user_ids = list(set([entry.get("user_id") for entry in time_entries_response.data if entry.get("user_id")]))
+                    if user_ids:
+                        users_rates_response = supabase.table("users").select("id, cost_per_hour_client").in_("id", user_ids).execute()
+                        user_rates_dict = {user["id"]: user.get("cost_per_hour_client", 0) for user in users_rates_response.data} if users_rates_response.data else {}
+                        
+                        # Calculate total billing value
+                        for entry in time_entries_response.data:
+                            duration = entry.get("duration", 0) or 0
+                            user_id = entry.get("user_id")
+                            rate = user_rates_dict.get(user_id, 0) or 0
+                            billing_value += duration * rate
+                
+                billing_value = round(billing_value, 2)
+            
+            excel_data.append({
+                "Abogado asignado": assigned_lawyer,
+                "Rol": role,
+                "Nombre del cliente": client_name,
+                "Asunto": task.get("title", ""),
+                "Área": task.get("area", ""),
+                "Tipo de facturación": get_billing_type_display(billing_type),
+                "Valor de facturación": format_currency(billing_value)
+            })
+        
+        return _create_simplified_excel_file(excel_data, "Reporte Simplificado", start_date, end_date)
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
 
+def _create_simplified_excel_file(data: List[dict], sheet_name: str, start_date: datetime, end_date: datetime):
+    """Create and return an Excel file with the simplified report data"""
+    
+    if not data:
+        raise HTTPException(status_code=404, detail="No hay datos para generar el reporte")
+    
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    output = io.BytesIO()
+    
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
+        workbook = writer.book
+        worksheet = writer.sheets[sheet_name]
+        
+        # Header format
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'vcenter',
+            'align': 'center',
+            'fg_color': '#D7E4BC',
+            'border': 1
+        })
+        
+        # Cell format
+        cell_format = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter'
+        })
+        
+        # Apply headers and adjust columns
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(1, col_num, value, header_format)
+            # Adjust column width based on content
+            max_length = max(len(str(value)), df[value].astype(str).str.len().max())
+            worksheet.set_column(col_num, col_num, min(max_length + 2, 30))
+        
+        # Title format
+        title_format = workbook.add_format({
+            'bold': True,
+            'font_size': 14,
+            'align': 'center',
+            'valign': 'vcenter'
+        })
+        
+        # Merge title row
+        worksheet.merge_range(f'A1:{chr(ord("A") + len(df.columns) - 1)}1', f'{sheet_name}', title_format)
+        
+        # Apply cell formatting
+        for row in range(len(df)):
+            for col in range(len(df.columns)):
+                value = df.iloc[row, col]
+                worksheet.write(row + 2, col, value, cell_format)
+    
+    output.seek(0)
+    
+    # Generate filename
+    filename = f"{sheet_name}_{start_date.date()}_{end_date.date()}.xlsx"
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )

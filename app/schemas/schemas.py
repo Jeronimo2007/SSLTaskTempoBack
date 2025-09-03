@@ -284,3 +284,10 @@ class PendienteUpdate(BaseModel):
     status: Optional[str] = None
     nota: Optional[str] = None
     due_date: Optional[datetime] = None
+
+
+class SimplifiedReportRequest(BaseModel):
+    """Request model for simplified report showing all clients with tasks"""
+    start_date: Optional[datetime] = None  # Defaults to current month
+    end_date: Optional[datetime] = None    # Defaults to current month
+    client_id: Optional[int] = None        # Defaults to all clients
