@@ -1600,14 +1600,14 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
     # 1) Obtener time entries del rango (todas las modalidades)
     entries_query = supabase.table("time_entries").select("""
         id, duration, start_time, end_time, description, user_id, facturado,
-        tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name)
+        tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name, coin)
     """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat())
     if client_id:
         entries_query = entries_query.eq("tasks.client_id", client_id)
     entries_response = entries_query.execute()
 
     # 2) Obtener todas las tareas del cliente (o de todos los clientes) para incluir las que no tengan tiempos
-    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name")
+    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name, coin")
     if client_id:
         tasks_query = tasks_query.eq("client_id", client_id)
     tasks_response = tasks_query.execute()
@@ -1644,6 +1644,7 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
         total = rate * duration
         task_ids_with_entries.add(task.get("id"))
 
+        currency = "USD" if (task.get("coin") == "USD") else "COP"
         excel_data.append({
             "Abogado": user_info.get("username", ""),
             "Rol": user_info.get("role", ""),
@@ -1655,6 +1656,7 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
             "Tiempo reportado": format_hours_to_hhmm(duration),
             "Fecha de reporte": entry.get("start_time", "")[:10] if entry.get("start_time") else "",
             "Tarifa del abogado": format_currency(rate),
+            "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(total),
             "Estado de facturación": entry.get("facturado", ""),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
@@ -1665,6 +1667,7 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
         if t["id"] in task_ids_with_entries:
             continue
         client_name = client_dict.get(t.get("client_id"), "")
+        currency = "USD" if (t.get("coin") == "USD") else "COP"
         excel_data.append({
             "Abogado": "",
             "Rol": "",
@@ -1676,6 +1679,7 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
             "Tiempo reportado": format_hours_to_hhmm(0),
             "Fecha de reporte": "",
             "Tarifa del abogado": format_currency(0),
+            "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(0),
             "Estado de facturación": "",
             "Abogado asignado": t.get("assigned_user_name", "") or "Sin abogado asignado"
@@ -1689,7 +1693,7 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
     
     # Build query for fixed rate tasks - show all tasks with this billing type
     query = supabase.table("tasks").select("""
-        id, title, created_at, billing_type, total_value, facturado, note, assigned_user_name, client_id
+        id, title, created_at, billing_type, total_value, facturado, note, assigned_user_name, client_id, coin
     """).eq("billing_type", "tarifa_fija")
     
     # Only filter by client if client_id is provided
@@ -1711,12 +1715,14 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
     for task in response.data:
         client_name = client_dict.get(task.get("client_id"), "")
         
+        currency = "USD" if (task.get("coin") == "USD") else "COP"
         excel_data.append({
             "Cliente": client_name,
             "Asunto": task.get("title", ""),
             "Fecha de creación": task.get("created_at", "")[:10] if task.get("created_at") else "",
             "Tipo de facturación": get_billing_type_display(task.get("billing_type", "")),
             "Tarifa fija": format_currency(task.get('total_value', 0) or 0),
+            "Moneda": currency,
             "Estado de facturación": task.get("facturado", ""),
             "Nota": task.get("note", ""),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
@@ -1730,7 +1736,7 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
     
     # Build query for monthly subscription tasks - show all tasks with this billing type
     query = supabase.table("tasks").select("""
-        id, title, area, billing_type, monthly_limit_hours_tasks, asesoria_tarif, facturado, client_id, assigned_user_name
+        id, title, area, billing_type, monthly_limit_hours_tasks, asesoria_tarif, facturado, client_id, assigned_user_name, coin
     """).eq("billing_type", "fija")
     
     # Only filter by client if client_id is provided
@@ -1785,6 +1791,7 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
         monthly_rate = task.get("asesoria_tarif", 0) or 0
         difference = monthly_rate - value_worked
         
+        currency = "USD" if (task.get("coin") == "USD") else "COP"
         excel_data.append({
             "Nombre del Cliente": client_name,
             "Asunto": task.get("title", ""),
@@ -1795,11 +1802,12 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
             "Límite de horas mensuales": format_hours_to_hhmm(task.get("monthly_limit_hours_tasks", 0) or 0),
             "Tarifa mensualidad": format_currency(monthly_rate),
             "Diferencia": format_currency(difference),
+            "Moneda": currency,
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
     return _create_comprehensive_excel_file(excel_data, "Reporte Mensualidad", start_date, end_date, 
-                                         conditional_formatting=True, difference_column="H")
+                                         conditional_formatting=True, difference_column="I")
 
 
 async def _generate_hourly_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
@@ -1808,14 +1816,14 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
     # 1) Obtener time entries de tareas hourly
     entries_query = supabase.table("time_entries").select("""
         id, duration, start_time, end_time, description, user_id, facturado,
-        tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name)
+        tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name, coin)
     """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat()).eq("tasks.billing_type", "hourly")
     if client_id:
         entries_query = entries_query.eq("tasks.client_id", client_id)
     entries_response = entries_query.execute()
 
     # 2) Obtener todas las tareas hourly (para incluir las que no tengan tiempos)
-    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name").eq("billing_type", "hourly")
+    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name, coin").eq("billing_type", "hourly")
     if client_id:
         tasks_query = tasks_query.eq("client_id", client_id)
     tasks_response = tasks_query.execute()
@@ -1852,6 +1860,7 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
         total = rate * duration
         task_ids_with_entries.add(task.get("id"))
 
+        currency = "USD" if (task.get("coin") == "USD") else "COP"
         excel_data.append({
             "Abogado": user_info.get("username", ""),
             "Rol": user_info.get("role", ""),
@@ -1863,6 +1872,7 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
             "Tiempo reportado": format_hours_to_hhmm(duration),
             "Fecha de reporte": entry.get("start_time", "")[:10] if entry.get("start_time") else "",
             "Tarifa del abogado": format_currency(rate),
+            "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(total),
             "Estado de facturación": entry.get("facturado", ""),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
@@ -1873,6 +1883,7 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
         if t["id"] in task_ids_with_entries:
             continue
         client_name = client_dict.get(t.get("client_id"), "")
+        currency = "USD" if (t.get("coin") == "USD") else "COP"
         excel_data.append({
             "Abogado": "",
             "Rol": "",
@@ -1884,6 +1895,7 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
             "Tiempo reportado": format_hours_to_hhmm(0),
             "Fecha de reporte": "",
             "Tarifa del abogado": format_currency(0),
+            "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(0),
             "Estado de facturación": "",
             "Abogado asignado": t.get("assigned_user_name", "") or "Sin abogado asignado"
@@ -1898,8 +1910,9 @@ async def _generate_task_specific_report(start_date: datetime, end_date: datetim
     # Get task information including billing type
     task_response = supabase.table("tasks").select("""
         id, title, client_id, area, billing_type, facturado, assigned_user_name,
-        asesoria_tarif, total_value, monthly_limit_hours_tasks, permanent
-    """).eq("id", task_id).single().execute()
+        asesoria_tarif, total_value, monthly_limit_hours_tasks, permanent, coin
+    """
+    ).eq("id", task_id).single().execute()
     
     if not task_response.data:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
@@ -1945,6 +1958,8 @@ async def _generate_task_hourly_report(task: dict, client: dict, time_entries: L
     total_hours = 0
     total_value = 0
     
+    currency = "USD" if (task.get("coin") == "USD") else "COP"
+
     for entry in time_entries:
         user = user_dict.get(entry["user_id"], {})
         duration = entry.get("duration", 0) or 0
@@ -1965,7 +1980,7 @@ async def _generate_task_hourly_report(task: dict, client: dict, time_entries: L
             "Modo de Facturación": "Por Hora",
             "Tiempo Trabajado": format_hours_to_hhmm(duration),
             "Tarifa Horaria": format_currency(rate),
-            "Moneda": "COP",
+            "Moneda": currency,
             "Total": format_currency(total),
             "Estado de facturación": entry.get("facturado", "no hay datos")
         })
@@ -1996,6 +2011,8 @@ async def _generate_task_fixed_rate_report(task: dict, client: dict, time_entrie
     excel_data = []
     total_hours = 0
     
+    currency = "USD" if (task.get("coin") == "USD") else "COP"
+
     for entry in time_entries:
         user = user_dict.get(entry["user_id"], {})
         duration = entry.get("duration", 0) or 0
@@ -2012,7 +2029,7 @@ async def _generate_task_fixed_rate_report(task: dict, client: dict, time_entrie
             "Modo de Facturación": "Tarifa Fija",
             "Tiempo Trabajado": format_hours_to_hhmm(duration),
             "Tarifa Fija": format_currency(task.get('total_value', 0)),
-            "Moneda": "COP",
+            "Moneda": currency,
             "Total": format_currency(task.get('total_value', 0)),
             "Estado de facturación": entry.get("facturado", "no hay datos")
         })
@@ -2045,6 +2062,8 @@ async def _generate_task_monthly_report(task: dict, client: dict, time_entries: 
     monthly_limit = task.get("monthly_limit_hours_tasks", 0)
     monthly_rate = task.get("asesoria_tarif", 0)
     
+    currency = "USD" if (task.get("coin") == "USD") else "COP"
+
     for entry in time_entries:
         user = user_dict.get(entry["user_id"], {})
         duration = entry.get("duration", 0) or 0
@@ -2062,7 +2081,7 @@ async def _generate_task_monthly_report(task: dict, client: dict, time_entries: 
             "Tiempo Trabajado": format_hours_to_hhmm(duration),
             "Límite Mensual": format_hours_to_hhmm(monthly_limit),
             "Tarifa Mensual": format_currency(monthly_rate),
-            "Moneda": "COP",
+            "Moneda": currency,
             "Total": format_currency(monthly_rate),
             "Estado de facturación": entry.get("facturado", "no hay datos")
         })
@@ -2114,6 +2133,7 @@ async def _generate_task_general_report(task: dict, client: dict, time_entries: 
     excel_data = []
     total_hours = 0
     total_value = 0
+    currency = "USD" if (task.get("coin") == "USD") else "COP"
     
     for entry in time_entries:
         user = user_dict.get(entry["user_id"], {})
@@ -2135,6 +2155,7 @@ async def _generate_task_general_report(task: dict, client: dict, time_entries: 
             "Tiempo reportado": format_hours_to_hhmm(duration),
             "Fecha de reporte": entry["start_time"][:10] if entry.get("start_time") else "",
             "Tarifa del abogado": format_currency(rate),
+            "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(total),
             "Estado de facturación": entry.get("facturado", ""),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
@@ -2152,6 +2173,7 @@ async def _generate_task_general_report(task: dict, client: dict, time_entries: 
         "Tiempo reportado": format_hours_to_hhmm(total_hours),
         "Fecha de reporte": "",
         "Tarifa del abogado": "",
+        "Moneda": "",
         "Total Tarifa x Tiempo": format_currency(total_value),
         "Estado de facturación": "",
         "Abogado asignado": ""
@@ -2205,19 +2227,21 @@ def _create_comprehensive_excel_file(data: List[dict], sheet_name: str, start_da
         if conditional_formatting and difference_column:
             green_format = workbook.add_format({'font_color': 'green', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
             red_format = workbook.add_format({'font_color': 'red', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-            
-            # Apply conditional formatting to difference column
+
+            # Apply conditional formatting to difference column using a formula so it works with text values
             diff_col_idx = ord(difference_column) - ord('A')
-            worksheet.conditional_format(f'{difference_column}2:{difference_column}{len(df)+1}', {
-                'type': 'cell',
-                'criteria': '>',
-                'value': 0,
+            start_row = 3
+            end_row = len(df) + 2
+            # Green if positive (exclude header by starting at row 3)
+            worksheet.conditional_format(f'{difference_column}{start_row}:{difference_column}{end_row}', {
+                'type': 'formula',
+                'criteria': f'=IFERROR(VALUE(SUBSTITUTE({difference_column}{start_row},".","")),0)>0',
                 'format': green_format
             })
-            worksheet.conditional_format(f'{difference_column}2:{difference_column}{len(df)+1}', {
-                'type': 'cell',
-                'criteria': '<',
-                'value': 0,
+            # Red if negative
+            worksheet.conditional_format(f'{difference_column}{start_row}:{difference_column}{end_row}', {
+                'type': 'formula',
+                'criteria': f'=IFERROR(VALUE(SUBSTITUTE({difference_column}{start_row},".","")),0)<0',
                 'format': red_format
             })
         
@@ -2315,7 +2339,7 @@ async def generate_simplified_report(
         # Get all tasks for clients (regardless of time entries)
         query = supabase.table("tasks").select("""
             id, title, client_id, area, billing_type, assigned_user_name,
-            asesoria_tarif, total_value, monthly_limit_hours_tasks
+            asesoria_tarif, total_value, monthly_limit_hours_tasks, coin
         """)
         
         # Only filter by client if client_id is provided
@@ -2375,6 +2399,7 @@ async def generate_simplified_report(
                 
                 billing_value = round(billing_value, 2)
             
+            currency = "USD" if (task.get("coin") == "USD") else "COP"
             excel_data.append({
                 "Abogado asignado": assigned_lawyer,
                 "Rol": role,
@@ -2382,10 +2407,11 @@ async def generate_simplified_report(
                 "Asunto": task.get("title", ""),
                 "Área": task.get("area", ""),
                 "Tipo de facturación": get_billing_type_display(billing_type),
+                "Moneda": currency,
                 "Valor de facturación": format_currency(billing_value)
             })
         
-        return _create_simplified_excel_file(excel_data, "Reporte Clientes Totales", start_date, end_date)
+        return _create_simplified_excel_file(excel_data, "Reporte Por Cliente", start_date, end_date)
 
     except HTTPException as e:
         raise e
