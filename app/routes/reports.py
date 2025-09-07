@@ -189,6 +189,14 @@ async def download_report(
             'valign': 'vcenter'
         })
 
+        # Time/duration cell format for hours displayed as [hh]:mm
+        time_format = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter',
+            'num_format': '[hh]:mm'
+        })
+
         # Ajustar el ancho de las columnas
         for col_num, value in enumerate(df.columns.values):
             worksheet.write(1, col_num, value, header_format)
@@ -211,7 +219,16 @@ async def download_report(
         for row in range(len(df)):
             for col in range(len(df.columns)):
                 value = df.iloc[row, col]
-                worksheet.write(row + 2, col, value, cell_format)
+                col_name = df.columns[col]
+                # Apply [hh]:mm formatting for duration columns
+                if col_name in ["Total Horas", "Horas por Tarea"] and value not in (None, ""):
+                    try:
+                        hours = float(value)
+                        worksheet.write_number(row + 2, col, hours / 24.0, time_format)
+                    except Exception:
+                        worksheet.write(row + 2, col, value, cell_format)
+                else:
+                    worksheet.write(row + 2, col, value, cell_format)
 
     output.seek(0)
     return StreamingResponse(
@@ -379,7 +396,8 @@ async def download_task_report(
             "Área": task_data.get("area", ""),
             "Fecha Trabajo": entry["start_time"][:10],
             "Modo de Facturación": "Por Hora",
-            "Tiempo Trabajado": format_hours_to_hhmm(tiempo_trabajado),
+            # Keep numeric hours here; we'll apply [hh]:mm number format when writing the cell
+            "Tiempo Trabajado": tiempo_trabajado,
             "Tarifa Horaria": format_currency(tarifa_horaria),
             "Moneda": "COP",
             "Total": format_currency(total),
@@ -435,9 +453,22 @@ async def download_task_report(
     # Escribir los datos
     for row_num, row in enumerate(excel_data, 3):
         for col_num, value in enumerate(row.values(), 1):
-            # Format "Tiempo Trabajado" column (column I, now 9th column)
+            # Format "Tiempo Trabajado" column (column I, now 9th column) using Excel [hh]:mm format
             if col_num == 9:  # Column I is the 9th column
-                value = format_hours(float(value))
+                try:
+                    hours_val = float(value) if value not in (None, "") else 0.0
+                except Exception:
+                    # Attempt to parse HH:MM strings if present
+                    try:
+                        parts = str(value).split(":")
+                        hours_val = int(parts[0]) + int(parts[1]) / 60.0
+                    except Exception:
+                        hours_val = 0.0
+                cell = ws.cell(row=row_num, column=col_num, value=hours_val / 24.0)
+                cell.number_format = "[hh]:mm"
+                cell.alignment = cell_alignment
+                cell.border = thin_border
+                continue
             # Format "Modo de Facturación" column (column H, now 8th column)
             elif col_num == 8:  # Column H is the 8th column
                 value = "Por Hora" if value == "hourly" else value
@@ -1566,45 +1597,53 @@ async def generate_comprehensive_report(
 async def _generate_general_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
     """Generate the general report with time tracking and lawyer rates"""
     
-    # Build query for time entries - show all time entries regardless of billing type
-    query = supabase.table("time_entries").select("""
+    # 1) Obtener time entries del rango (todas las modalidades)
+    entries_query = supabase.table("time_entries").select("""
         id, duration, start_time, end_time, description, user_id, facturado,
         tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name)
     """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat())
-    
-    # Only filter by client if client_id is provided
     if client_id:
-        query = query.eq("tasks.client_id", client_id)
-    
-    response = query.execute()
-    
-    if not response.data:
-        raise HTTPException(status_code=404, detail="No se encontraron registros de tiempo para el período especificado")
-    
-    # Get client and user information
-    client_ids = list(set([entry.get("tasks", {}).get("client_id") for entry in response.data if entry.get("tasks", {}).get("client_id")]))
-    user_ids = list(set([entry.get("user_id") for entry in response.data if entry.get("user_id")]))
-    
-    clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
-    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", user_ids).execute()
-    
-    client_dict = {client["id"]: client["name"] for client in clients_response.data} if clients_response.data else {}
-    user_dict = {user["id"]: {"username": user["username"], "role": user.get("role", ""), "rate": user.get("cost_per_hour_client", 0)} for user in users_response.data} if users_response.data else {}
-    
-    # Prepare Excel data
+        entries_query = entries_query.eq("tasks.client_id", client_id)
+    entries_response = entries_query.execute()
+
+    # 2) Obtener todas las tareas del cliente (o de todos los clientes) para incluir las que no tengan tiempos
+    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name")
+    if client_id:
+        tasks_query = tasks_query.eq("client_id", client_id)
+    tasks_response = tasks_query.execute()
+
+    if not tasks_response.data:
+        raise HTTPException(status_code=404, detail="No se encontraron tareas para el filtro seleccionado")
+
+    # 3) Mapear clientes y usuarios necesarios
+    entry_client_ids = list(set([e.get("tasks", {}).get("client_id") for e in (entries_response.data or []) if e.get("tasks", {}).get("client_id")]))
+    task_client_ids = list(set([t.get("client_id") for t in tasks_response.data if t.get("client_id")]))
+    all_client_ids = list(set(entry_client_ids + task_client_ids))
+
+    if all_client_ids:
+        clients_response = supabase.table("clients").select("id, name").in_("id", all_client_ids).execute()
+        client_dict = {client["id"]: client["name"] for client in (clients_response.data or [])}
+    else:
+        client_dict = {}
+
+    entry_user_ids = list(set([e.get("user_id") for e in (entries_response.data or []) if e.get("user_id")]))
+    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", entry_user_ids).execute() if entry_user_ids else type("obj", (), {"data": []})
+    user_dict = {user["id"]: {"username": user["username"], "role": user.get("role", ""), "rate": user.get("cost_per_hour_client", 0)} for user in (users_response.data or [])}
+
+    # 4) Construir filas a partir de time entries existentes
     excel_data = []
-    for entry in response.data:
+    task_ids_with_entries = set()
+    for entry in (entries_response.data or []):
         task = entry.get("tasks", {})
         user_id = entry.get("user_id")
         user_info = user_dict.get(user_id, {}) if user_id else {}
-        client_id = task.get("client_id")
-        client_name = client_dict.get(client_id, "")
-        
-        # Calculate total (rate x time)
+        c_id = task.get("client_id")
+        client_name = client_dict.get(c_id, "")
         rate = user_info.get("rate", 0) or 0
         duration = entry.get("duration", 0) or 0
         total = rate * duration
-        
+        task_ids_with_entries.add(task.get("id"))
+
         excel_data.append({
             "Abogado": user_info.get("username", ""),
             "Rol": user_info.get("role", ""),
@@ -1620,7 +1659,28 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
             "Estado de facturación": entry.get("facturado", ""),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
-    
+
+    # 5) Agregar filas de tareas sin tiempos
+    for t in tasks_response.data:
+        if t["id"] in task_ids_with_entries:
+            continue
+        client_name = client_dict.get(t.get("client_id"), "")
+        excel_data.append({
+            "Abogado": "",
+            "Rol": "",
+            "Nombre del Cliente": client_name,
+            "Asunto": t.get("title", ""),
+            "Descripción": "",
+            "Área": t.get("area", ""),
+            "Tipo de facturación": get_billing_type_display(t.get("billing_type", "")),
+            "Tiempo reportado": format_hours_to_hhmm(0),
+            "Fecha de reporte": "",
+            "Tarifa del abogado": format_currency(0),
+            "Total Tarifa x Tiempo": format_currency(0),
+            "Estado de facturación": "",
+            "Abogado asignado": t.get("assigned_user_name", "") or "Sin abogado asignado"
+        })
+
     return _create_comprehensive_excel_file(excel_data, "Reporte General", start_date, end_date)
 
 
@@ -1733,7 +1793,7 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
             "Tiempo reportado": format_hours_to_hhmm(total_time),
             "Valor trabajado": format_currency(value_worked),
             "Límite de horas mensuales": format_hours_to_hhmm(task.get("monthly_limit_hours_tasks", 0) or 0),
-            "Tarifa tarifa de mensual": format_currency(monthly_rate),
+            "Tarifa mensualidad": format_currency(monthly_rate),
             "Diferencia": format_currency(difference),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
@@ -1745,44 +1805,53 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
 async def _generate_hourly_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
     """Generate the hourly billing tasks report"""
     
-    # Build query for time entries from hourly billing tasks
-    query = supabase.table("time_entries").select("""
+    # 1) Obtener time entries de tareas hourly
+    entries_query = supabase.table("time_entries").select("""
         id, duration, start_time, end_time, description, user_id, facturado,
         tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name)
     """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat()).eq("tasks.billing_type", "hourly")
-    
     if client_id:
-        query = query.eq("tasks.client_id", client_id)
-    
-    response = query.execute()
-    
-    if not response.data:
-        raise HTTPException(status_code=404, detail="No se encontraron registros de tiempo para tareas con facturación por hora (billing_type: hourly)")
-    
-    # Get client and user information
-    client_ids = list(set([entry.get("tasks", {}).get("client_id") for entry in response.data if entry.get("tasks", {}).get("client_id")]))
-    user_ids = list(set([entry.get("user_id") for entry in response.data if entry.get("user_id")]))
-    
-    clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
-    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", user_ids).execute()
-    
-    client_dict = {client["id"]: client["name"] for client in clients_response.data} if clients_response.data else {}
-    user_dict = {user["id"]: {"username": user["username"], "role": user.get("role", ""), "rate": user.get("cost_per_hour_client", 0)} for user in users_response.data} if users_response.data else {}
-    
-    # Prepare Excel data
+        entries_query = entries_query.eq("tasks.client_id", client_id)
+    entries_response = entries_query.execute()
+
+    # 2) Obtener todas las tareas hourly (para incluir las que no tengan tiempos)
+    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name").eq("billing_type", "hourly")
+    if client_id:
+        tasks_query = tasks_query.eq("client_id", client_id)
+    tasks_response = tasks_query.execute()
+
+    if not tasks_response.data:
+        raise HTTPException(status_code=404, detail="No se encontraron tareas con facturación por hora")
+
+    # 3) Mapear clientes y usuarios
+    entry_client_ids = list(set([e.get("tasks", {}).get("client_id") for e in (entries_response.data or []) if e.get("tasks", {}).get("client_id")]))
+    task_client_ids = list(set([t.get("client_id") for t in tasks_response.data if t.get("client_id")]))
+    all_client_ids = list(set(entry_client_ids + task_client_ids))
+
+    if all_client_ids:
+        clients_response = supabase.table("clients").select("id, name").in_("id", all_client_ids).execute()
+        client_dict = {client["id"]: client["name"] for client in (clients_response.data or [])}
+    else:
+        client_dict = {}
+
+    entry_user_ids = list(set([e.get("user_id") for e in (entries_response.data or []) if e.get("user_id")]))
+    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", entry_user_ids).execute() if entry_user_ids else type("obj", (), {"data": []})
+    user_dict = {user["id"]: {"username": user["username"], "role": user.get("role", ""), "rate": user.get("cost_per_hour_client", 0)} for user in (users_response.data or [])}
+
+    # 4) Construir filas a partir de time entries
     excel_data = []
-    for entry in response.data:
+    task_ids_with_entries = set()
+    for entry in (entries_response.data or []):
         task = entry.get("tasks", {})
         user_id = entry.get("user_id")
         user_info = user_dict.get(user_id, {}) if user_id else {}
-        client_id = task.get("client_id")
-        client_name = client_dict.get(client_id, "")
-        
-        # Calculate total (rate x time)
+        c_id = task.get("client_id")
+        client_name = client_dict.get(c_id, "")
         rate = user_info.get("rate", 0) or 0
         duration = entry.get("duration", 0) or 0
         total = rate * duration
-        
+        task_ids_with_entries.add(task.get("id"))
+
         excel_data.append({
             "Abogado": user_info.get("username", ""),
             "Rol": user_info.get("role", ""),
@@ -1798,7 +1867,28 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
             "Estado de facturación": entry.get("facturado", ""),
             "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
-    
+
+    # 5) Agregar filas de tareas hourly sin tiempos
+    for t in tasks_response.data:
+        if t["id"] in task_ids_with_entries:
+            continue
+        client_name = client_dict.get(t.get("client_id"), "")
+        excel_data.append({
+            "Abogado": "",
+            "Rol": "",
+            "Nombre del Cliente": client_name,
+            "Asunto": t.get("title", ""),
+            "Descripción": "",
+            "Área": t.get("area", ""),
+            "Tipo de facturación": "Por hora",
+            "Tiempo reportado": format_hours_to_hhmm(0),
+            "Fecha de reporte": "",
+            "Tarifa del abogado": format_currency(0),
+            "Total Tarifa x Tiempo": format_currency(0),
+            "Estado de facturación": "",
+            "Abogado asignado": t.get("assigned_user_name", "") or "Sin abogado asignado"
+        })
+
     return _create_comprehensive_excel_file(excel_data, "Reporte Hourly", start_date, end_date)
 
 
@@ -2102,6 +2192,14 @@ def _create_comprehensive_excel_file(data: List[dict], sheet_name: str, start_da
             'align': 'center',
             'valign': 'vcenter'
         })
+
+        # Time format for duration columns
+        time_format = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter',
+            'num_format': '[hh]:mm'
+        })
         
         # Conditional formatting for difference column (green/red text)
         if conditional_formatting and difference_column:
@@ -2145,12 +2243,31 @@ def _create_comprehensive_excel_file(data: List[dict], sheet_name: str, start_da
         for row in range(len(df)):
             for col in range(len(df.columns)):
                 value = df.iloc[row, col]
+                col_name = df.columns[col]
                 # Use conditional formatting if applicable, otherwise use regular cell format
                 if conditional_formatting and difference_column and col == diff_col_idx:
                     # Skip as conditional formatting is already applied
                     pass
                 else:
-                    worksheet.write(row + 2, col, value, cell_format)
+                    # Convert duration-like columns to Excel time with [hh]:mm format
+                    if col_name in ("Tiempo reportado", "Tiempo Trabajado", "Límite de horas mensuales", "Límite Mensual"):
+                        excel_time_value = None
+                        if isinstance(value, (int, float)):
+                            excel_time_value = float(value) / 24.0
+                        elif isinstance(value, str) and ":" in value:
+                            try:
+                                parts = value.split(":")
+                                hours = int(parts[0])
+                                minutes = int(parts[1])
+                                excel_time_value = (hours + minutes / 60.0) / 24.0
+                            except Exception:
+                                excel_time_value = None
+                        if excel_time_value is not None:
+                            worksheet.write_number(row + 2, col, excel_time_value, time_format)
+                        else:
+                            worksheet.write(row + 2, col, value, cell_format)
+                    else:
+                        worksheet.write(row + 2, col, value, cell_format)
     
     output.seek(0)
     
@@ -2268,7 +2385,7 @@ async def generate_simplified_report(
                 "Valor de facturación": format_currency(billing_value)
             })
         
-        return _create_simplified_excel_file(excel_data, "Reporte Simplificado", start_date, end_date)
+        return _create_simplified_excel_file(excel_data, "Reporte Clientes Totales", start_date, end_date)
 
     except HTTPException as e:
         raise e
