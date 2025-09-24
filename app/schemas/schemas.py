@@ -85,7 +85,7 @@ class TimeEntryCreateByTime(BaseModel):
     user_id: int
     task_id: int
     start_time: datetime
-    description: str
+    description: Optional[str] = " "
     duration: float
     
 
@@ -94,7 +94,7 @@ class TimeEntryCreate(BaseModel):
     task_id: int
     start_time: datetime
     end_time: datetime
-    description: str
+    description: Optional[str] = " "
     
 
 

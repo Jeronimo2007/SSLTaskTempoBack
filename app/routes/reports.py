@@ -220,7 +220,7 @@ async def download_report(
             for col in range(len(df.columns)):
                 value = df.iloc[row, col]
                 col_name = df.columns[col]
-                # Apply [hh]:mm formatting for duration columns
+                # Apply [hh]:mm formatting for duration columns (only for decimal hours)
                 if col_name in ["Total Horas", "Horas por Tarea"] and value not in (None, ""):
                     try:
                         hours = float(value)
@@ -1710,10 +1710,45 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
     clients_response = supabase.table("clients").select("id, name").in_("id", client_ids).execute()
     client_dict = {client["id"]: client["name"] for client in clients_response.data} if clients_response.data else {}
     
+    # Get time entries for these tasks in the date range with user information
+    task_ids = [task["id"] for task in response.data]
+    time_response = supabase.table("time_entries").select("""
+        task_id, duration, user_id
+    """).in_("task_id", task_ids).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat()).execute()
+    
+    # Get user rates for all users who worked on these tasks
+    user_ids = list(set([entry.get("user_id") for entry in time_response.data if entry.get("user_id")]))
+    users_response = supabase.table("users").select("id, cost_per_hour_client").in_("id", user_ids).execute()
+    user_dict = {user["id"]: user.get("cost_per_hour_client", 0) for user in users_response.data} if users_response.data else {}
+    
+    # Calculate total time and worked value per task
+    task_time = {}
+    task_valorized_hours = {}
+    
+    for entry in time_response.data:
+        task_id = entry.get("task_id")
+        duration = entry.get("duration", 0) or 0
+        user_id = entry.get("user_id")
+        
+        if task_id not in task_time:
+            task_time[task_id] = 0
+            task_valorized_hours[task_id] = 0
+        
+        task_time[task_id] += duration
+        
+        # Calculate valorized hours (hours * lawyer rate)
+        user_rate = user_dict.get(user_id, 0)
+        task_valorized_hours[task_id] += duration * user_rate
+    
     # Prepare Excel data
     excel_data = []
     for task in response.data:
         client_name = client_dict.get(task.get("client_id"), "")
+        task_id = task.get("id")
+        
+        # Get total hours worked and valorized hours for this task
+        total_hours = task_time.get(task_id, 0)
+        valorized_hours = task_valorized_hours.get(task_id, 0)
         
         currency = "USD" if (task.get("coin") == "USD") else "COP"
         excel_data.append({
@@ -1721,6 +1756,8 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
             "Asunto": task.get("title", ""),
             "Fecha de creación": task.get("created_at", "")[:10] if task.get("created_at") else "",
             "Tipo de facturación": get_billing_type_display(task.get("billing_type", "")),
+            "Horas Trabajadas": format_hours_to_hhmm(total_hours),
+            "Horas valorizadas": format_currency(valorized_hours),
             "Tarifa fija": format_currency(task.get('total_value', 0) or 0),
             "Moneda": currency,
             "Estado de facturación": task.get("facturado", ""),
