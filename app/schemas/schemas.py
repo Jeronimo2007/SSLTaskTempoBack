@@ -96,7 +96,12 @@ class TimeEntryCreate(BaseModel):
     end_time: datetime
     description: Optional[str] = " "
     
-
+class TimeEntryCreateShared(BaseModel):
+    ids: List[int]
+    task_id: int
+    start_time: datetime
+    end_time: datetime
+    description: Optional[str] = " "
 
 class TimeEntryUpdate(BaseModel):
     id: int

@@ -145,16 +145,31 @@ def update_task(task_data: TaskUpdate):
 def delete_task(task_id: int):
     """ remove a tasks """
     try:
+        # First check if task exists
+        check_task = supabase.table("tasks").select("id").eq("id", task_id).execute()
+        
+        if not check_task.data:
+            return {"error": "La tarea no existe"}
+        
         # Delete time entries first
         response_time_entries = supabase.table("time_entries").delete().eq("task_id", task_id).execute()
+        
+        # Delete pendientes (pending items) that reference this task
+        response_pendientes = supabase.table("pendientes").delete().eq("task_id", task_id).execute()
+        
+        # Delete group-task relationships that reference this task
+        response_groups_tasks = supabase.table("groups_tasks").delete().eq("task_id", task_id).execute()
         
         # Delete the task
         response = supabase.table("tasks").delete().eq("id", task_id).execute()
         
-        if not response.data:
-            return {"error": "No se pudo eliminar la tarea"}
+        # Check if deletion was successful by verifying the task no longer exists
+        verify_deletion = supabase.table("tasks").select("id").eq("id", task_id).execute()
+        
+        if not verify_deletion.data:
+            return {"success": True, "message": "Tarea eliminada correctamente"}
         else:
-            return {"message": "Tarea eliminada correctamente"}
+            return {"error": "No se pudo eliminar la tarea"}
             
     except Exception as e:
         return {"error": f"Error al eliminar la tarea: {str(e)}"}

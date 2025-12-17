@@ -45,20 +45,37 @@ def get_billing_type_display(billing_type: str) -> str:
 
 def format_hours_to_hhmm(hours: float) -> str:
     """Convert decimal hours to HH:MM format"""
+    import math
     if hours is None or hours == 0:
         return "00:00"
     
-    total_minutes = int(hours * 60)
-    h = total_minutes // 60
-    m = total_minutes % 60
-    return f"{h:02d}:{m:02d}"
+    # Handle NaN and INF values
+    if isinstance(hours, float) and (math.isnan(hours) or math.isinf(hours)):
+        return "00:00"
+    
+    try:
+        total_minutes = int(hours * 60)
+        h = total_minutes // 60
+        m = total_minutes % 60
+        return f"{h:02d}:{m:02d}"
+    except (ValueError, TypeError, OverflowError):
+        return "00:00"
 
 
 def format_currency(amount: float) -> str:
     """Format currency amount as whole number with dot separators"""
+    import math
     if amount is None:
         return "0"
-    return f"{int(round(amount)):,}".replace(",", ".")
+    
+    # Handle NaN and INF values
+    if isinstance(amount, float) and (math.isnan(amount) or math.isinf(amount)):
+        return "0"
+    
+    try:
+        return f"{int(round(amount)):,}".replace(",", ".")
+    except (ValueError, TypeError, OverflowError):
+        return "0"
 
 
 @router.post("/hours_by_client/", response_model=List[dict])
@@ -1958,7 +1975,8 @@ async def _generate_task_specific_report(start_date: datetime, end_date: datetim
     billing_type = task.get("billing_type")
     
     # Get client information
-    client_response = supabase.table("clients").select("id, name").eq("id", task["client_id"]).single().execute()
+    client_id = task.get("client_id")
+    client_response = supabase.table("clients").select("id, name").eq("id", client_id).single().execute()
     if not client_response.data:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     client = client_response.data
@@ -1972,8 +1990,8 @@ async def _generate_task_specific_report(start_date: datetime, end_date: datetim
         raise HTTPException(status_code=404, detail="No hay registros de tiempo para esta tarea en el período especificado")
     
     # Get user information
-    user_ids = list(set([entry["user_id"] for entry in time_entries_response.data]))
-    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", user_ids).execute()
+    user_ids = list(set([entry["user_id"] for entry in time_entries_response.data if entry.get("user_id")]))
+    users_response = supabase.table("users").select("id, username, role, cost_per_hour_client").in_("id", user_ids).execute() if user_ids else type("obj", (), {"data": []})
     user_dict = {user["id"]: user for user in users_response.data}
     
     # Generate report based on billing type
@@ -2096,21 +2114,22 @@ async def _generate_task_monthly_report(task: dict, client: dict, time_entries: 
     
     excel_data = []
     total_hours = 0
-    monthly_limit = task.get("monthly_limit_hours_tasks", 0)
-    monthly_rate = task.get("asesoria_tarif", 0)
+    monthly_limit = task.get("monthly_limit_hours_tasks", 0) or 0
+    monthly_rate = task.get("asesoria_tarif", 0) or 0
     
     currency = "USD" if (task.get("coin") == "USD") else "COP"
 
     for entry in time_entries:
-        user = user_dict.get(entry["user_id"], {})
+        user_id = entry.get("user_id")
+        user = user_dict.get(user_id, {}) if user_id else {}
         duration = entry.get("duration", 0) or 0
         total_hours += duration
         
         excel_data.append({
             "Abogado": user.get("username", ""),
             "Rol": user.get("role", ""),
-            "Cliente": client["name"],
-            "Asunto": task["title"],
+            "Cliente": client.get("name", ""),
+            "Asunto": task.get("title", ""),
             "Trabajo": entry.get("description", ""),
             "Área": task.get("area", ""),
             "Fecha Trabajo": entry["start_time"][:10] if entry.get("start_time") else "",
@@ -2120,29 +2139,35 @@ async def _generate_task_monthly_report(task: dict, client: dict, time_entries: 
             "Tarifa Mensual": format_currency(monthly_rate),
             "Moneda": currency,
             "Total": format_currency(monthly_rate),
-            "Estado de facturación": entry.get("facturado", "no hay datos")
+            "Estado de facturación": entry.get("facturado", "no hay datos"),
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
         })
     
     # Calculate additional charges if monthly limit is exceeded
     additional_charge = 0
+    original_total_hours = total_hours  # Store original for summary row
     if total_hours > monthly_limit:
         excess_hours = total_hours - monthly_limit
         # Calculate additional charge based on user rates
+        remaining_excess = excess_hours
         for entry in time_entries:
-            user = user_dict.get(entry["user_id"], {})
+            user_id = entry.get("user_id")
+            user = user_dict.get(user_id, {}) if user_id else {}
             rate = user.get("cost_per_hour_client", 0) or 0
             duration = entry.get("duration", 0) or 0
-            if total_hours > monthly_limit:
-                if total_hours - duration >= monthly_limit:
-                    # This entry contributes to additional charges
+            
+            if remaining_excess > 0:
+                if duration <= remaining_excess:
+                    # This entry contributes fully to additional charges
                     additional_charge += duration * rate
+                    remaining_excess -= duration
                 else:
                     # Partial contribution to additional charges
-                    partial_hours = total_hours - monthly_limit
+                    partial_hours = remaining_excess
                     additional_charge += partial_hours * rate
-                total_hours -= duration
+                    remaining_excess = 0
     
-    # Add summary row
+    # Add summary row (use original_total_hours, not the modified total_hours)
     excel_data.append({
         "Abogado": "TOTAL",
         "Rol": "",
@@ -2152,13 +2177,13 @@ async def _generate_task_monthly_report(task: dict, client: dict, time_entries: 
         "Área": "",
         "Fecha Trabajo": "",
         "Modo de Facturación": "",
-        "Tiempo Trabajado": format_hours_to_hhmm(total_hours),
+        "Tiempo Trabajado": format_hours_to_hhmm(original_total_hours),
         "Límite Mensual": "",
         "Tarifa Mensual": "",
         "Moneda": "",
         "Total": format_currency(monthly_rate + additional_charge),
         "Estado de facturación": "",
-        "Abogado asignado": ""
+        "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
     })
     
     return _create_comprehensive_excel_file(excel_data, f"Reporte Tarea {task['id']} Mensualidad", start_date, end_date)
@@ -2228,108 +2253,126 @@ def _create_comprehensive_excel_file(data: List[dict], sheet_name: str, start_da
     
     # Create DataFrame
     df = pd.DataFrame(data)
+    
+    # Clean NaN and INF values from DataFrame
+    import numpy as np
+    df = df.replace([np.nan, np.inf, -np.inf], None)
+    # Replace None with empty string for better Excel display
+    df = df.fillna("")
+    
     output = io.BytesIO()
     
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
-        workbook = writer.book
-        worksheet = writer.sheets[sheet_name]
+            df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
+            workbook = writer.book
+            worksheet = writer.sheets[sheet_name]
         
-        # Header format
-        header_format = workbook.add_format({
-            'bold': True,
-            'text_wrap': True,
-            'valign': 'vcenter',
-            'align': 'center',
-            'fg_color': '#52b5f7',
-            'border': 1
-        })
-        
-        # Cell format
-        cell_format = workbook.add_format({
-            'border': 1,
-            'align': 'center',
-            'valign': 'vcenter'
-        })
-
-        # Time format for duration columns
-        time_format = workbook.add_format({
-            'border': 1,
-            'align': 'center',
-            'valign': 'vcenter',
-            'num_format': '[hh]:mm'
-        })
-        
-        # Conditional formatting for difference column (green/red text)
-        if conditional_formatting and difference_column:
-            green_format = workbook.add_format({'font_color': 'green', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-            red_format = workbook.add_format({'font_color': 'red', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-
-            # Apply conditional formatting to difference column using a formula so it works with text values
-            diff_col_idx = ord(difference_column) - ord('A')
-            start_row = 3
-            end_row = len(df) + 2
-            # Green if positive (exclude header by starting at row 3)
-            worksheet.conditional_format(f'{difference_column}{start_row}:{difference_column}{end_row}', {
-                'type': 'formula',
-                'criteria': f'=IFERROR(VALUE(SUBSTITUTE({difference_column}{start_row},".","")),0)>0',
-                'format': green_format
+            # Header format
+            header_format = workbook.add_format({
+                'bold': True,
+                'text_wrap': True,
+                'valign': 'vcenter',
+                'align': 'center',
+                'fg_color': '#52b5f7',
+                'border': 1
             })
-            # Red if negative
-            worksheet.conditional_format(f'{difference_column}{start_row}:{difference_column}{end_row}', {
-                'type': 'formula',
-                'criteria': f'=IFERROR(VALUE(SUBSTITUTE({difference_column}{start_row},".","")),0)<0',
-                'format': red_format
+            
+            # Cell format
+            cell_format = workbook.add_format({
+                'border': 1,
+                'align': 'center',
+                'valign': 'vcenter'
             })
-        
-        # Apply headers and adjust columns
-        for col_num, value in enumerate(df.columns.values):
-            worksheet.write(1, col_num, value, header_format)
-            # Adjust column width based on content
-            max_length = max(len(str(value)), df[value].astype(str).str.len().max())
-            worksheet.set_column(col_num, col_num, min(max_length + 2, 30))
-        
-        # Title format
-        title_format = workbook.add_format({
-            'bold': True,
-            'font_size': 14,
-            'align': 'center',
-            'valign': 'vcenter'
-        })
-        
-        # Merge title row
-        worksheet.merge_range(f'A1:{chr(ord("A") + len(df.columns) - 1)}1', f'{sheet_name}', title_format)
-        
-        # Apply cell formatting
-        for row in range(len(df)):
-            for col in range(len(df.columns)):
-                value = df.iloc[row, col]
-                col_name = df.columns[col]
-                # Use conditional formatting if applicable, otherwise use regular cell format
-                if conditional_formatting and difference_column and col == diff_col_idx:
-                    # Skip as conditional formatting is already applied
-                    pass
-                else:
-                    # Convert duration-like columns to Excel time with [hh]:mm format
-                    if col_name in ("Tiempo reportado", "Tiempo Trabajado", "Límite de horas mensuales", "Límite Mensual"):
-                        excel_time_value = None
-                        if isinstance(value, (int, float)):
-                            excel_time_value = float(value) / 24.0
-                        elif isinstance(value, str) and ":" in value:
-                            try:
-                                parts = value.split(":")
-                                hours = int(parts[0])
-                                minutes = int(parts[1])
-                                excel_time_value = (hours + minutes / 60.0) / 24.0
-                            except Exception:
-                                excel_time_value = None
-                        if excel_time_value is not None:
-                            worksheet.write_number(row + 2, col, excel_time_value, time_format)
-                        else:
-                            worksheet.write(row + 2, col, value, cell_format)
+
+            # Time format for duration columns
+            time_format = workbook.add_format({
+                'border': 1,
+                'align': 'center',
+                'valign': 'vcenter',
+                'num_format': '[hh]:mm'
+            })
+            
+            # Conditional formatting for difference column (green/red text)
+            if conditional_formatting and difference_column:
+                green_format = workbook.add_format({'font_color': 'green', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+                red_format = workbook.add_format({'font_color': 'red', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+
+                # Apply conditional formatting to difference column using a formula so it works with text values
+                diff_col_idx = ord(difference_column) - ord('A')
+                start_row = 3
+                end_row = len(df) + 2
+                # Green if positive (exclude header by starting at row 3)
+                worksheet.conditional_format(f'{difference_column}{start_row}:{difference_column}{end_row}', {
+                    'type': 'formula',
+                    'criteria': f'=IFERROR(VALUE(SUBSTITUTE({difference_column}{start_row},".","")),0)>0',
+                    'format': green_format
+                })
+                # Red if negative
+                worksheet.conditional_format(f'{difference_column}{start_row}:{difference_column}{end_row}', {
+                    'type': 'formula',
+                    'criteria': f'=IFERROR(VALUE(SUBSTITUTE({difference_column}{start_row},".","")),0)<0',
+                    'format': red_format
+                })
+            
+            # Apply headers and adjust columns
+            for col_num, value in enumerate(df.columns.values):
+                worksheet.write(1, col_num, value, header_format)
+                # Adjust column width based on content
+                max_length = max(len(str(value)), df[value].astype(str).str.len().max())
+                worksheet.set_column(col_num, col_num, min(max_length + 2, 30))
+            
+            # Title format
+            title_format = workbook.add_format({
+                'bold': True,
+                'font_size': 14,
+                'align': 'center',
+                'valign': 'vcenter'
+            })
+            
+            # Merge title row
+            worksheet.merge_range(f'A1:{chr(ord("A") + len(df.columns) - 1)}1', f'{sheet_name}', title_format)
+            
+            # Apply cell formatting
+            import math
+            for row in range(len(df)):
+                for col in range(len(df.columns)):
+                    value = df.iloc[row, col]
+                    col_name = df.columns[col]
+                    
+                    # Skip if value is None, NaN, or INF (shouldn't happen after cleaning, but safety check)
+                    if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
+                        worksheet.write(row + 2, col, "", cell_format)
+                        continue
+                    
+                    # Use conditional formatting if applicable, otherwise use regular cell format
+                    if conditional_formatting and difference_column and col == diff_col_idx:
+                        # Skip as conditional formatting is already applied
+                        pass
                     else:
-                        worksheet.write(row + 2, col, value, cell_format)
-    
+                        # Convert duration-like columns to Excel time with [hh]:mm format
+                        if col_name in ("Tiempo reportado", "Tiempo Trabajado", "Límite de horas mensuales", "Límite Mensual"):
+                            excel_time_value = None
+                            if isinstance(value, (int, float)) and not (math.isnan(value) or math.isinf(value)):
+                                excel_time_value = float(value) / 24.0
+                            elif isinstance(value, str) and ":" in value:
+                                try:
+                                    parts = value.split(":")
+                                    hours = int(parts[0])
+                                    minutes = int(parts[1])
+                                    excel_time_value = (hours + minutes / 60.0) / 24.0
+                                except Exception:
+                                    excel_time_value = None
+                            if excel_time_value is not None and not (math.isnan(excel_time_value) or math.isinf(excel_time_value)):
+                                worksheet.write_number(row + 2, col, excel_time_value, time_format)
+                            else:
+                                worksheet.write(row + 2, col, str(value) if value != "" else "", cell_format)
+                        else:
+                            # For non-time columns, write as string to avoid NaN/INF issues
+                            if isinstance(value, (int, float)) and (math.isnan(value) or math.isinf(value)):
+                                worksheet.write(row + 2, col, "", cell_format)
+                            else:
+                                worksheet.write(row + 2, col, value, cell_format)
+        
     output.seek(0)
     
     # Generate filename

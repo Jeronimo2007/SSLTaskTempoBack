@@ -1,8 +1,8 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
-from app.models.ModelTimeEntry import create_time_entry, create_time_entry_by_time, delete_time_entry, get_all_time_entries, get_time_entry, update_time_entry
-from app.schemas.schemas import TimeEntryCreate, TimeEntryCreateByTime, TimeEntryResponse, TimeEntryUpdate, getEntries, FacturadoUpdate
+from app.models.ModelTimeEntry import create_time_entry, create_time_entry_by_time, delete_time_entry, get_all_time_entries, get_time_entry, update_time_entry, shared_time_entry
+from app.schemas.schemas import TimeEntryCreate, TimeEntryCreateByTime, TimeEntryResponse, TimeEntryUpdate, getEntries, FacturadoUpdate, TimeEntryCreateShared
 from app.services.utils import get_current_user
 from app.database.data import supabase
 
@@ -42,6 +42,18 @@ async def create_time_entry_endpoint(entry_data: TimeEntryCreate, user: dict = D
     
     return entry
 
+
+@router.post("/create_shared")
+async def create_time_entry_shared_endpoint(entry_data: TimeEntryCreateShared, user: dict = Depends(get_current_user)):
+    """ create a shared time entry """
+
+    entry = shared_time_entry(user["id"], entry_data)
+   
+    if "error" in entry:
+
+        raise HTTPException(status_code=400, detail=entry["error"])
+    
+    return entry
 
 @router.post("/get_all_time_entries")
 async def get_time_entries_endpoint(data: getEntries):

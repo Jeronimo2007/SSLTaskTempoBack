@@ -1,8 +1,8 @@
 from app.database.data import supabase
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from app.schemas.schemas import TimeEntryCreate, TimeEntryCreateByTime, TimeEntryUpdate, getEntries
-
+from app.schemas.schemas import TimeEntryCreate, TimeEntryCreateByTime, TimeEntryUpdate, getEntries, TimeEntryCreateShared
+from typing import List
 
 def calculate_duration(start_time: datetime, end_time: datetime) -> float:
     """ return the duration in hours """
@@ -99,16 +99,18 @@ def update_time_entry(entry_data: TimeEntryUpdate):
     Update a time entry.
     Supports updating start_time, end_time, and description fields.
     Only fields provided in entry_data will be updated.
+    Automatically recalculates duration when start_time or end_time are updated.
     """
 
     print("Raw entry_data:", entry_data)
     print("entry_data dict:", entry_data.dict())
     
-    # First, check if the time entry exists
+    # First, check if the time entry exists and get current values if needed
     try:
-        check_response = supabase.table("time_entries").select("id").eq("id", entry_data.id).execute()
+        check_response = supabase.table("time_entries").select("*").eq("id", entry_data.id).execute()
         if not check_response.data:
             return {"error": f"Time entry with id {entry_data.id} not found"}
+        current_entry = check_response.data[0]
     except Exception as e:
         print(f"Error checking if time entry exists: {e}")
         return {"error": f"Error checking time entry existence: {str(e)}"}
@@ -128,39 +130,61 @@ def update_time_entry(entry_data: TimeEntryUpdate):
     # Handle timezone conversion for datetime fields if they exist
     bogota_tz = ZoneInfo("America/Bogota")
     
+    # Track if we need to recalculate duration
+    needs_duration_recalc = False
+    final_start_time = None
+    final_end_time = None
+    
     if 'start_time' in update_data and update_data['start_time']:
         try:
             if update_data['start_time'].tzinfo is None:
-                update_data['start_time'] = update_data['start_time'].replace(tzinfo=bogota_tz)
+                final_start_time = update_data['start_time'].replace(tzinfo=bogota_tz)
             else:
-                update_data['start_time'] = update_data['start_time'].astimezone(bogota_tz)
-            update_data['start_time'] = update_data['start_time'].isoformat()
+                final_start_time = update_data['start_time'].astimezone(bogota_tz)
+            update_data['start_time'] = final_start_time.isoformat()
+            needs_duration_recalc = True
         except Exception as e:
             print(f"Error processing start_time: {e}")
             return {"error": f"Invalid start_time format: {str(e)}"}
+    else:
+        # Use current start_time if not being updated
+        if current_entry.get('start_time'):
+            final_start_time = datetime.fromisoformat(current_entry['start_time'].replace('Z', '+00:00'))
+            if final_start_time.tzinfo is None:
+                final_start_time = final_start_time.replace(tzinfo=bogota_tz)
+            else:
+                final_start_time = final_start_time.astimezone(bogota_tz)
     
     if 'end_time' in update_data and update_data['end_time']:
         try:
             if update_data['end_time'].tzinfo is None:
-                update_data['end_time'] = update_data['end_time'].replace(tzinfo=bogota_tz)
+                final_end_time = update_data['end_time'].replace(tzinfo=bogota_tz)
             else:
-                update_data['end_time'] = update_data['end_time'].astimezone(bogota_tz)
-            update_data['end_time'] = update_data['end_time'].isoformat()
+                final_end_time = update_data['end_time'].astimezone(bogota_tz)
+            update_data['end_time'] = final_end_time.isoformat()
+            needs_duration_recalc = True
         except Exception as e:
             print(f"Error processing end_time: {e}")
             return {"error": f"Invalid end_time format: {str(e)}"}
+    else:
+        # Use current end_time if not being updated
+        if current_entry.get('end_time'):
+            final_end_time = datetime.fromisoformat(current_entry['end_time'].replace('Z', '+00:00'))
+            if final_end_time.tzinfo is None:
+                final_end_time = final_end_time.replace(tzinfo=bogota_tz)
+            else:
+                final_end_time = final_end_time.astimezone(bogota_tz)
     
-    # If both start_time and end_time are being updated, validate the relationship
-    if 'start_time' in update_data and 'end_time' in update_data and update_data['start_time'] and update_data['end_time']:
-        try:
-            from datetime import datetime
-            start_time = datetime.fromisoformat(update_data['start_time'])
-            end_time = datetime.fromisoformat(update_data['end_time'])
-            if start_time >= end_time:
-                return {"error": "La hora de inicio debe ser menor a la hora de finalización."}
-        except Exception as e:
-            print(f"Error validating time relationship: {e}")
-            return {"error": f"Error validating time relationship: {str(e)}"}
+    # If either start_time or end_time is being updated, recalculate duration
+    if needs_duration_recalc and final_start_time and final_end_time:
+        # Validate the relationship
+        if final_start_time >= final_end_time:
+            return {"error": "La hora de inicio debe ser menor a la hora de finalización."}
+        
+        # Calculate and update duration
+        duration = calculate_duration(final_start_time, final_end_time)
+        update_data['duration'] = duration
+        print(f"Recalculated duration: {duration} hours")
     
     print("Final update_data to be sent to DB:", update_data)
     
@@ -194,3 +218,59 @@ def delete_time_entry(entry_id: int):
             return {"error": "Error en la configuración de la base de datos: La tabla 'task' no existe. Verifique que el nombre de la tabla sea correcto."}
         # For any other errors, return the original error
         return {"error": error_message}
+
+
+
+
+
+def shared_time_entry(user_id: int,entry_data: TimeEntryCreateShared):
+
+
+    """ shared a time entry between multiple users """
+
+    try:
+
+
+        bogota_tz = ZoneInfo("America/Bogota")
+
+        # Ensure both datetimes are timezone-aware and in Bogotá time
+        if entry_data.start_time.tzinfo is None:
+            # Assume naive datetimes are in Bogotá time
+            entry_data.start_time = entry_data.start_time.replace(tzinfo=bogota_tz)
+        else:
+            # Convert to Bogotá time if not already
+            entry_data.start_time = entry_data.start_time.astimezone(bogota_tz)
+
+        if entry_data.end_time.tzinfo is None:
+            entry_data.end_time = entry_data.end_time.replace(tzinfo=bogota_tz)
+        else:
+            entry_data.end_time = entry_data.end_time.astimezone(bogota_tz)
+
+        if entry_data.start_time >= entry_data.end_time:
+            return {"error": "La hora de inicio debe ser menor a la hora de finalización."}
+
+        duration = calculate_duration(entry_data.start_time, entry_data.end_time)
+
+
+       
+
+        created_entries = []
+        for i in entry_data.ids:
+            response = supabase.table("time_entries").insert({
+                "task_id": entry_data.task_id,
+                "user_id": i,
+                "duration": duration,
+                "start_time": entry_data.start_time.isoformat(),
+                "end_time": entry_data.end_time.isoformat(),
+                "description": entry_data.description
+            }).execute()
+
+            if response.data:
+                created_entries.append(response.data[0])
+            else:
+                return {"error": "Error creating shared time entry"}
+
+        return {"message": "Registros de tiempo creados correctamente", "entries": created_entries}
+        
+    except Exception as e:
+        return {"error": f"Error creating shared time entry: {str(e)}"}

@@ -110,19 +110,25 @@ async def delete_task_endpoint(task_id: int, token: str = Depends(oauth2_scheme)
     """ delete a task """
 
     user_data = payload(token)
-        
 
     if not user_data or "id" not in user_data:
         raise HTTPException(status_code=401, detail="Usuario no autenticado")
 
+    # Validate task_id
+    if not isinstance(task_id, int) or task_id <= 0:
+        raise HTTPException(status_code=400, detail="ID de tarea inválido")
 
     result = delete_task(task_id)
 
     if "error" in result:
-
-        raise HTTPException(status_code=400, detail=result["error"])
+        # Determine appropriate status code based on error type
+        if "no existe" in result["error"]:
+            raise HTTPException(status_code=404, detail=result["error"])
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
     
-    return result
+    # Return success response with the expected format
+    return {"success": True, "message": result.get("message", "Tarea eliminada correctamente")}
 
 
 
