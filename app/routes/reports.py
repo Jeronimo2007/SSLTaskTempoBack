@@ -2126,8 +2126,6 @@ async def _generate_task_monthly_report(task: dict, client: dict, time_entries: 
         total_hours += duration
         
         excel_data.append({
-            "Abogado": user.get("username", ""),
-            "Rol": user.get("role", ""),
             "Cliente": client.get("name", ""),
             "Asunto": task.get("title", ""),
             "Trabajo": entry.get("description", ""),
@@ -2169,8 +2167,6 @@ async def _generate_task_monthly_report(task: dict, client: dict, time_entries: 
     
     # Add summary row (use original_total_hours, not the modified total_hours)
     excel_data.append({
-        "Abogado": "TOTAL",
-        "Rol": "",
         "Cliente": "",
         "Asunto": "",
         "Trabajo": "",

@@ -37,7 +37,7 @@ def get_all_tasks_by_client(client_id: int):
     """get all task from de client id"""
 
     response = supabase.table("tasks").select(
-        "id, title, client_id, clients!inner(name, active), area,billing_type"
+        "id, title, client_id, clients!inner(name, active), area,billing_type,facturado_por,activo"
     ).eq("client_id", client_id).eq('clients.active', True).execute()
 
 
@@ -54,7 +54,8 @@ def get_all_tasks_by_client(client_id: int):
             "billing_type": task.get("billing_type"),
             "note": task.get("note"),
             "total_value": task.get("total_value"),
-            "billing_type": task.get("billing_type")
+            "facturado_por": task.get("facturado_por"),
+            "activo": task.get("activo")
         }
         for task in response.data
     ]
@@ -73,14 +74,14 @@ def get_all_tasks(user_id: int = None):
 
             # Filter tasks based on the retrieved client IDs and active clients
             response = supabase.table("tasks").select(
-                "id, title, client_id, clients!inner(name, active), area, total_billed, total_value, billing_type, note, permanent, monthly_limit_hours_tasks, assignment_date,facturado,asesoria_tarif,coin, assigned_user_name,created_at"
+                "id, title, client_id, clients!inner(name, active), area, total_billed, total_value, billing_type, note, permanent, monthly_limit_hours_tasks, assignment_date,facturado,asesoria_tarif,coin, assigned_user_name,created_at,facturado_por,activo"
             ).in_('client_id', client_ids).eq('clients.active', True).execute()
         else:
             return []
     else:
         # Get all tasks from active clients
         response = supabase.table("tasks").select(
-            "id, title, note, client_id, clients!inner(name, active), area, total_billed,total_value,billing_type, permanent, monthly_limit_hours_tasks,assignment_date,facturado,asesoria_tarif,coin, assigned_user_name,created_at"
+            "id, title, note, client_id, clients!inner(name, active), area, total_billed,total_value,billing_type, permanent, monthly_limit_hours_tasks,assignment_date,facturado,asesoria_tarif,coin, assigned_user_name,created_at,facturado_por,activo"
         ).eq('clients.active', True).execute()
 
     if not response.data:
@@ -103,7 +104,9 @@ def get_all_tasks(user_id: int = None):
             "asesoria_tarif": task.get("asesoria_tarif"),
             "coin": task.get("coin"),
             "assigned_user_name": task.get("assigned_user_name"),
-            "created_at": task.get("created_at")
+            "created_at": task.get("created_at"),
+            "facturado_por": task.get("facturado_por"),
+            "activo": task.get("activo")
         }
         for task in response.data
     ]

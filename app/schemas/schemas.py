@@ -52,6 +52,8 @@ class TaskCreate(BaseModel):
     asesoria_tarif: Optional[float] = None
     coin: Optional[str] = None
     assigned_user_name: str
+    facturado_por: Literal["BPO", "SSL"]
+    activo: bool = True
 
 class TaskUpdate(BaseModel):
     id: int
@@ -65,6 +67,8 @@ class TaskUpdate(BaseModel):
     asesoria_tarif: Optional[float] = None
     coin: Optional[str] = None
     assigned_user_name: Optional[str] = None
+    facturado_por: Optional[Literal["BPO", "SSL"]] = None
+    activo: Optional[bool] = None
 
 class TaskResponse(BaseModel):
     id: int
@@ -80,6 +84,8 @@ class TaskResponse(BaseModel):
     note: Optional[str]
     total_value: Optional[float]
     area: Optional[str]
+    facturado_por: Optional[Literal["BPO", "SSL"]]
+    activo: Optional[bool]
 
 class TimeEntryCreateByTime(BaseModel):
     user_id: int
