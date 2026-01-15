@@ -1575,7 +1575,8 @@ async def generate_comprehensive_report(
     - other billing types: General format as fallback
     """
     try:
-        from datetime import datetime, date
+        from datetime import datetime, date, timedelta
+        from zoneinfo import ZoneInfo
         import calendar
         
         # Set default dates to current month if not provided
@@ -1583,11 +1584,56 @@ async def generate_comprehensive_report(
             today = date.today()
             first_day = date(today.year, today.month, 1)
             last_day = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
-            start_date = datetime.combine(first_day, datetime.min.time())
-            end_date = datetime.combine(last_day, datetime.max.time())
+            bogota_tz = ZoneInfo("America/Bogota")
+            start_date = datetime.combine(first_day, datetime.min.time()).replace(tzinfo=bogota_tz)
+            end_date = datetime.combine(last_day, datetime.max.time()).replace(tzinfo=bogota_tz)
         else:
-            start_date = request.start_date
-            end_date = request.end_date
+            # DEBUG: Print incoming request dates
+            print(f"[DEBUG] Incoming request dates:")
+            print(f"  request.start_date: {request.start_date} (type: {type(request.start_date)})")
+            print(f"  request.end_date: {request.end_date} (type: {type(request.end_date)})")
+            
+            # Normalize start_date to beginning of day and end_date to end of day
+            # to ensure all entries from those days are included
+            # Convert to Bogotá timezone to match database storage
+            bogota_tz = ZoneInfo("America/Bogota")
+            
+            if isinstance(request.start_date, datetime):
+                # Convert to Bogotá timezone if timezone-aware, otherwise assume Bogotá
+                if request.start_date.tzinfo is None:
+                    start_dt = request.start_date.replace(tzinfo=bogota_tz)
+                    print(f"[DEBUG] start_date was naive, added Bogotá timezone")
+                else:
+                    start_dt = request.start_date.astimezone(bogota_tz)
+                    print(f"[DEBUG] start_date had timezone {request.start_date.tzinfo}, converted to Bogotá")
+                # Normalize to start of day in Bogotá timezone
+                start_date = datetime.combine(start_dt.date(), datetime.min.time()).replace(tzinfo=bogota_tz)
+            else:
+                # It's a date object - assume Bogotá timezone
+                start_date = datetime.combine(request.start_date, datetime.min.time()).replace(tzinfo=bogota_tz)
+            
+            if isinstance(request.end_date, datetime):
+                # Convert to Bogotá timezone if timezone-aware, otherwise assume Bogotá
+                if request.end_date.tzinfo is None:
+                    end_dt = request.end_date.replace(tzinfo=bogota_tz)
+                    print(f"[DEBUG] end_date was naive, added Bogotá timezone")
+                else:
+                    end_dt = request.end_date.astimezone(bogota_tz)
+                    print(f"[DEBUG] end_date had timezone {request.end_date.tzinfo}, converted to Bogotá")
+                # Normalize to end of day in Bogotá timezone (23:59:59.999999)
+                # This ensures all entries from the end date are included
+                end_date = datetime.combine(end_dt.date(), datetime.max.time()).replace(tzinfo=bogota_tz)
+            else:
+                # It's a date object - assume Bogotá timezone
+                # Normalize to end of day
+                end_date = datetime.combine(request.end_date, datetime.max.time()).replace(tzinfo=bogota_tz)
+            
+            # DEBUG: Print normalized dates
+            print(f"[DEBUG] Normalized dates (Bogotá timezone):")
+            print(f"  start_date: {start_date} ({start_date.isoformat()})")
+            print(f"  end_date: {end_date} ({end_date.isoformat()})")
+            print(f"  start_date.date(): {start_date.date()}")
+            print(f"  end_date.date(): {end_date.date()}")
 
         # If task_id is provided, generate task-specific report based on billing type
         if request.task_id:
@@ -1614,17 +1660,101 @@ async def generate_comprehensive_report(
 async def _generate_general_report(start_date: datetime, end_date: datetime, client_id: Optional[int] = None):
     """Generate the general report with time tracking and lawyer rates"""
     
+    # DEBUG: Print function parameters
+    print(f"[DEBUG] _generate_general_report called with:")
+    print(f"  start_date: {start_date} ({start_date.isoformat()})")
+    print(f"  end_date: {end_date} ({end_date.isoformat()})")
+    print(f"  client_id: {client_id}")
+    
     # 1) Obtener time entries del rango (todas las modalidades)
-    entries_query = supabase.table("time_entries").select("""
-        id, duration, start_time, end_time, description, user_id, facturado,
-        tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name, coin)
-    """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat())
-    if client_id:
-        entries_query = entries_query.eq("tasks.client_id", client_id)
-    entries_response = entries_query.execute()
+    # Filter by start_time to include all entries that started within the date range
+    # Format as date strings (YYYY-MM-DD) for consistent comparison with database
+    # This matches the format used in other queries throughout the codebase
+    from datetime import timedelta
+    start_date_str = start_date.strftime("%Y-%m-%d")
+    # For end_date, we need to include the entire day, so we use the next day's date
+    # and use .lt() for exclusive comparison, which includes all of the end_date day
+    end_date_next_day = (end_date.date() + timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    # DEBUG: Print query date strings
+    print(f"[DEBUG] Query date strings:")
+    print(f"  start_date_str: '{start_date_str}'")
+    print(f"  end_date.date(): {end_date.date()}")
+    print(f"  end_date_next_day: '{end_date_next_day}'")
+    print(f"[DEBUG] Query will be: .gte('start_time', '{start_date_str}').lt('start_time', '{end_date_next_day}')")
+    
+    # Fetch all results using pagination (Supabase limits to 1000 rows by default)
+    all_entries = []
+    page_size = 1000
+    offset = 0
+    
+    print(f"[DEBUG] Starting pagination to fetch all entries...")
+    
+    while True:
+        # Build query fresh for each page to avoid query builder issues
+        page_query = supabase.table("time_entries").select("""
+            id, duration, start_time, end_time, description, user_id, facturado,
+            tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name, coin, facturado_por, activo)
+        """).gte("start_time", start_date_str).lt("start_time", end_date_next_day).order("start_time", desc=False)
+        
+        if client_id:
+            page_query = page_query.eq("tasks.client_id", client_id)
+        
+        # Apply pagination
+        page_query = page_query.range(offset, offset + page_size - 1)
+        page_response = page_query.execute()
+        
+        if not page_response.data or len(page_response.data) == 0:
+            print(f"[DEBUG] No more entries found at offset {offset}")
+            break
+        
+        all_entries.extend(page_response.data)
+        print(f"[DEBUG] Fetched page at offset {offset}: {len(page_response.data)} entries (total so far: {len(all_entries)})")
+        
+        # If we got fewer than page_size, we've reached the end
+        if len(page_response.data) < page_size:
+            print(f"[DEBUG] Reached end of results (got {len(page_response.data)} < {page_size})")
+            break
+        
+        offset += page_size
+    
+    # Create a mock response object with all entries
+    class MockResponse:
+        def __init__(self, data):
+            self.data = data
+    
+    entries_response = MockResponse(all_entries)
+    print(f"[DEBUG] Pagination complete. Total entries fetched: {len(all_entries)}")
+    
+    # DEBUG: Print query results
+    print(f"[DEBUG] Query executed with pagination. Total entries returned: {len(entries_response.data) if entries_response.data else 0}")
+    if entries_response.data:
+        # Show first few start_time values to see what dates are being returned
+        print(f"[DEBUG] Sample of returned entry start_time values:")
+        for i, entry in enumerate(entries_response.data[:10]):
+            start_time = entry.get("start_time", "")
+            print(f"  Entry {i+1}: start_time = '{start_time}'")
+        if len(entries_response.data) > 10:
+            print(f"  ... and {len(entries_response.data) - 10} more entries")
+        
+        # Group by month to see distribution
+        from collections import defaultdict
+        month_counts = defaultdict(int)
+        for entry in entries_response.data:
+            start_time = entry.get("start_time", "")
+            if start_time:
+                # Extract year-month from start_time (format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
+                try:
+                    year_month = start_time[:7]  # Gets YYYY-MM
+                    month_counts[year_month] += 1
+                except:
+                    pass
+        print(f"[DEBUG] Entries by month:")
+        for month in sorted(month_counts.keys()):
+            print(f"  {month}: {month_counts[month]} entries")
 
     # 2) Obtener todas las tareas del cliente (o de todos los clientes) para incluir las que no tengan tiempos
-    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name, coin")
+    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name, coin, facturado_por, activo")
     if client_id:
         tasks_query = tasks_query.eq("client_id", client_id)
     tasks_response = tasks_query.execute()
@@ -1676,7 +1806,9 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
             "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(total),
             "Estado de facturación": entry.get("facturado", ""),
-            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado",
+            "Facturado por": task.get("facturado_por", ""),
+            "Activo": "Sí" if task.get("activo") else "No"
         })
 
     # 5) Agregar filas de tareas sin tiempos
@@ -1699,7 +1831,9 @@ async def _generate_general_report(start_date: datetime, end_date: datetime, cli
             "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(0),
             "Estado de facturación": "",
-            "Abogado asignado": t.get("assigned_user_name", "") or "Sin abogado asignado"
+            "Abogado asignado": t.get("assigned_user_name", "") or "Sin abogado asignado",
+            "Facturado por": t.get("facturado_por", ""),
+            "Activo": "Sí" if t.get("activo") else "No"
         })
 
     return _create_comprehensive_excel_file(excel_data, "Reporte General", start_date, end_date)
@@ -1710,7 +1844,7 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
     
     # Build query for fixed rate tasks - show all tasks with this billing type
     query = supabase.table("tasks").select("""
-        id, title, created_at, billing_type, total_value, facturado, note, assigned_user_name, client_id, coin
+        id, title, created_at, billing_type, total_value, facturado, note, assigned_user_name, client_id, coin, facturado_por, activo
     """).eq("billing_type", "tarifa_fija")
     
     # Only filter by client if client_id is provided
@@ -1779,7 +1913,9 @@ async def _generate_fixed_rate_report(start_date: datetime, end_date: datetime, 
             "Moneda": currency,
             "Estado de facturación": task.get("facturado", ""),
             "Nota": task.get("note", ""),
-            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado",
+            "Facturado por": task.get("facturado_por", ""),
+            "Activo": "Sí" if task.get("activo") else "No"
         })
     
     return _create_comprehensive_excel_file(excel_data, "Reporte Tarifa Fija", start_date, end_date)
@@ -1790,7 +1926,7 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
     
     # Build query for monthly subscription tasks - show all tasks with this billing type
     query = supabase.table("tasks").select("""
-        id, title, area, billing_type, monthly_limit_hours_tasks, asesoria_tarif, facturado, client_id, assigned_user_name, coin
+        id, title, area, billing_type, monthly_limit_hours_tasks, asesoria_tarif, facturado, client_id, assigned_user_name, coin, facturado_por, activo
     """).eq("billing_type", "fija")
     
     # Only filter by client if client_id is provided
@@ -1857,7 +1993,9 @@ async def _generate_monthly_report(start_date: datetime, end_date: datetime, cli
             "Tarifa mensualidad": format_currency(monthly_rate),
             "Diferencia": format_currency(difference),
             "Moneda": currency,
-            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado",
+            "Facturado por": task.get("facturado_por", ""),
+            "Activo": "Sí" if task.get("activo") else "No"
         })
     
     return _create_comprehensive_excel_file(excel_data, "Reporte Mensualidad", start_date, end_date, 
@@ -1870,14 +2008,14 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
     # 1) Obtener time entries de tareas hourly
     entries_query = supabase.table("time_entries").select("""
         id, duration, start_time, end_time, description, user_id, facturado,
-        tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name, coin)
+        tasks!inner(id, title, client_id, area, billing_type, facturado, assigned_user_name, coin, facturado_por, activo)
     """).gte("start_time", start_date.isoformat()).lte("end_time", end_date.isoformat()).eq("tasks.billing_type", "hourly")
     if client_id:
         entries_query = entries_query.eq("tasks.client_id", client_id)
     entries_response = entries_query.execute()
 
     # 2) Obtener todas las tareas hourly (para incluir las que no tengan tiempos)
-    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name, coin").eq("billing_type", "hourly")
+    tasks_query = supabase.table("tasks").select("id, title, client_id, area, billing_type, assigned_user_name, coin, facturado_por, activo").eq("billing_type", "hourly")
     if client_id:
         tasks_query = tasks_query.eq("client_id", client_id)
     tasks_response = tasks_query.execute()
@@ -1929,7 +2067,9 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
             "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(total),
             "Estado de facturación": entry.get("facturado", ""),
-            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado",
+            "Facturado por": task.get("facturado_por", ""),
+            "Activo": "Sí" if task.get("activo") else "No"
         })
 
     # 5) Agregar filas de tareas hourly sin tiempos
@@ -1952,7 +2092,9 @@ async def _generate_hourly_report(start_date: datetime, end_date: datetime, clie
             "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(0),
             "Estado de facturación": "",
-            "Abogado asignado": t.get("assigned_user_name", "") or "Sin abogado asignado"
+            "Abogado asignado": t.get("assigned_user_name", "") or "Sin abogado asignado",
+            "Facturado por": t.get("facturado_por", ""),
+            "Activo": "Sí" if t.get("activo") else "No"
         })
 
     return _create_comprehensive_excel_file(excel_data, "Reporte Hourly", start_date, end_date)
@@ -1964,7 +2106,7 @@ async def _generate_task_specific_report(start_date: datetime, end_date: datetim
     # Get task information including billing type
     task_response = supabase.table("tasks").select("""
         id, title, client_id, area, billing_type, facturado, assigned_user_name,
-        asesoria_tarif, total_value, monthly_limit_hours_tasks, permanent, coin
+        asesoria_tarif, total_value, monthly_limit_hours_tasks, permanent, coin, facturado_por, activo
     """
     ).eq("id", task_id).single().execute()
     
@@ -2037,7 +2179,9 @@ async def _generate_task_hourly_report(task: dict, client: dict, time_entries: L
             "Tarifa Horaria": format_currency(rate),
             "Moneda": currency,
             "Total": format_currency(total),
-            "Estado de facturación": entry.get("facturado", "no hay datos")
+            "Estado de facturación": entry.get("facturado", "no hay datos"),
+            "Facturado por": task.get("facturado_por", ""),
+            "Activo": "Sí" if task.get("activo") else "No"
         })
     
     # Add summary row
@@ -2054,7 +2198,9 @@ async def _generate_task_hourly_report(task: dict, client: dict, time_entries: L
         "Tarifa Horaria": "",
         "Moneda": "",
         "Total": format_currency(total_value),
-        "Estado de facturación": ""
+        "Estado de facturación": "",
+        "Facturado por": "",
+        "Activo": ""
     })
     
     return _create_comprehensive_excel_file(excel_data, f"Reporte Tarea {task['id']} Por Hora", start_date, end_date)
@@ -2086,7 +2232,9 @@ async def _generate_task_fixed_rate_report(task: dict, client: dict, time_entrie
             "Tarifa Fija": format_currency(task.get('total_value', 0)),
             "Moneda": currency,
             "Total": format_currency(task.get('total_value', 0)),
-            "Estado de facturación": entry.get("facturado", "no hay datos")
+            "Estado de facturación": entry.get("facturado", "no hay datos"),
+            "Facturado por": task.get("facturado_por", ""),
+            "Activo": "Sí" if task.get("activo") else "No"
         })
     
     # Add summary row
@@ -2103,7 +2251,9 @@ async def _generate_task_fixed_rate_report(task: dict, client: dict, time_entrie
         "Tarifa Fija": "",
         "Moneda": "",
         "Total": format_currency(task.get('total_value', 0)),
-        "Estado de facturación": ""
+        "Estado de facturación": "",
+        "Facturado por": "",
+        "Activo": ""
     })
     
     return _create_comprehensive_excel_file(excel_data, f"Reporte Tarea {task['id']} Tarifa Fija", start_date, end_date)
@@ -2138,7 +2288,9 @@ async def _generate_task_monthly_report(task: dict, client: dict, time_entries: 
             "Moneda": currency,
             "Total": format_currency(monthly_rate),
             "Estado de facturación": entry.get("facturado", "no hay datos"),
-            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado",
+            "Facturado por": task.get("facturado_por", ""),
+            "Activo": "Sí" if task.get("activo") else "No"
         })
     
     # Calculate additional charges if monthly limit is exceeded
@@ -2179,7 +2331,9 @@ async def _generate_task_monthly_report(task: dict, client: dict, time_entries: 
         "Moneda": "",
         "Total": format_currency(monthly_rate + additional_charge),
         "Estado de facturación": "",
-        "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
+        "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado",
+        "Facturado por": "",
+        "Activo": ""
     })
     
     return _create_comprehensive_excel_file(excel_data, f"Reporte Tarea {task['id']} Mensualidad", start_date, end_date)
@@ -2216,7 +2370,9 @@ async def _generate_task_general_report(task: dict, client: dict, time_entries: 
             "Moneda": currency,
             "Total Tarifa x Tiempo": format_currency(total),
             "Estado de facturación": entry.get("facturado", ""),
-            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado"
+            "Abogado asignado": task.get("assigned_user_name", "") or "Sin abogado asignado",
+            "Facturado por": task.get("facturado_por", ""),
+            "Activo": "Sí" if task.get("activo") else "No"
         })
     
     # Add summary row
@@ -2232,6 +2388,8 @@ async def _generate_task_general_report(task: dict, client: dict, time_entries: 
         "Fecha de reporte": "",
         "Tarifa del abogado": "",
         "Moneda": "",
+        "Facturado por": "",
+        "Activo": "",
         "Total Tarifa x Tiempo": format_currency(total_value),
         "Estado de facturación": "",
         "Abogado asignado": ""
@@ -2415,7 +2573,7 @@ async def generate_simplified_report(
         # Get all tasks for clients (regardless of time entries)
         query = supabase.table("tasks").select("""
             id, title, client_id, area, billing_type, assigned_user_name,
-            asesoria_tarif, total_value, monthly_limit_hours_tasks, coin
+            asesoria_tarif, total_value, monthly_limit_hours_tasks, coin, facturado_por, activo
         """)
         
         # Only filter by client if client_id is provided
@@ -2484,7 +2642,9 @@ async def generate_simplified_report(
                 "Área": task.get("area", ""),
                 "Tipo de facturación": get_billing_type_display(billing_type),
                 "Moneda": currency,
-                "Valor de facturación": format_currency(billing_value)
+                "Valor de facturación": format_currency(billing_value),
+                "Facturado por": task.get("facturado_por", ""),
+                "Activo": "Sí" if task.get("activo") else "No"
             })
         
         return _create_simplified_excel_file(excel_data, "Reporte Por Cliente", start_date, end_date)
